@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use image::RgbaImage;
+use image::{GenericImage, RgbaImage};
 use serde::Serialize;
 use tauri::Emitter;
 
@@ -50,19 +50,20 @@ pub fn row_profiles(img: &RgbaImage) -> RowProfiles {
     let w = img.width() as usize;
     let h = img.height() as usize;
     let mut bands = vec![vec![0.0f32; h]; BANDS];
+    let mut counts = vec![vec![0.0f32; h]; BANDS];
     let band_w = (w / BANDS).max(1);
     for (y, row) in img.rows().enumerate() {
-        for b in 0..BANDS {
-            let x0 = b * band_w;
-            let x1 = if b == BANDS - 1 { w } else { (b + 1) * band_w };
-            let mut acc = 0.0f32;
-            let mut n = 0.0f32;
-            for x in (x0..x1).step_by(2) {
-                let p = row[x];
-                acc += 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32;
-                n += 1.0;
+        for (x, p) in row.enumerate() {
+            let b = (x / band_w).min(BANDS - 1);
+            bands[b][y] += 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32;
+            counts[b][y] += 1.0;
+        }
+    }
+    for b in 0..BANDS {
+        for y in 0..h {
+            if counts[b][y] > 0.0 {
+                bands[b][y] /= counts[b][y];
             }
-            bands[b][y] = if n > 0.0 { acc / n } else { 0.0 };
         }
     }
     RowProfiles { rows: h, bands }

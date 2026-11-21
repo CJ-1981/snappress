@@ -33,7 +33,7 @@ pub fn list_displays(app: AppHandle) -> Vec<DisplayInfo> {
             };
             let m = monitors.get(i);
             let name = m
-                .and_then(|m| m.name().clone())
+                .and_then(|mm| mm.name().cloned())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| format!("Display {}", i + 1));
             Some(DisplayInfo {

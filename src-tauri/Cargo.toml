@@ -33,6 +33,11 @@ arboard = "3"
 # ffmpeg discovery / on-demand download / raw frame piping (MP4 + GIF encoding)
 ffmpeg-sidecar = "1.1"
 
+# Pin windows-capture to the exact version scap 0.0.8 was built against:
+# 1.5.0 broke the WCSettings::new signature and fails to compile scap.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-capture = "=1.3.6"
+
 [profile.release]
 lto = true
 strip = true
