@@ -147,8 +147,9 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
-/// Map a scap display id onto a tauri Monitor by matching physical sizes,
-/// falling back to the primary monitor.
+/// Map a scap display id onto a tauri Monitor. Scap displays and tauri
+/// monitors are paired in enumeration order (exact on single-monitor
+/// machines), falling back to the primary monitor.
 pub fn pick_tauri_monitor(
     app: &AppHandle,
     display_id: Option<u32>,
@@ -156,16 +157,15 @@ pub fn pick_tauri_monitor(
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if let Some(id) = display_id {
         let scap_displays = capture::display_targets();
-        if let Some(st) = scap_displays.iter().find(|t| match t {
-            scap::Target::Display(d) => d.id == id,
-            _ => false,
-        }) {
-            let (sw, sh) = capture::scap_display_size(st);
-            if let Some(t) = monitors
-                .iter()
-                .find(|m| m.size().width as u64 == sw && m.size().height as u64 == sh)
-            {
-                return Ok(t.clone());
+        if let Some(idx) = scap_displays
+            .iter()
+            .position(|t| match t {
+                scap::Target::Display(d) => d.id == id,
+                _ => false,
+            })
+        {
+            if let Some(m) = monitors.get(idx) {
+                return Ok(m.clone());
             }
         }
     }

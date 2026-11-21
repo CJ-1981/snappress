@@ -4,6 +4,8 @@ use scap::frame::Frame;
 use scap::Target;
 use tauri::Manager;
 
+pub mod stitch;
+
 /// Enumerate scap display targets (scap 0.0.8 exposes displays via targets).
 pub fn display_targets() -> Vec<Target> {
     scap::get_all_targets()
@@ -12,27 +14,9 @@ pub fn display_targets() -> Vec<Target> {
         .collect()
 }
 
-/// Physical pixel size of a scap display target.
-/// On macOS `get_target_dimensions` returns logical points, so multiply by the
-/// scale factor; on Windows the monitor size is already physical pixels.
-pub fn scap_display_size(target: &Target) -> (u64, u64) {
-    let (w, h) = scap::get_target_dimensions(target);
-    #[cfg(target_os = "macos")]
-    {
-        let scale = scap::get_scale_factor(target).max(1.0);
-        (
-            (w as f64 * scale).round() as u64,
-            (h as f64 * scale).round() as u64,
-        )
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        (w, h)
-    }
-}
-
-/// Resolve a display id coming from the UI into a scap display id,
-/// falling back to the primary monitor (or the first monitor found).
+/// Resolve a display id coming from the UI into a scap display id.
+/// Falls back by pairing scap displays with tauri monitors in enumeration
+/// order (exact on single-monitor machines), then to the first display.
 pub fn resolve_scap_display_id(
     app: &tauri::AppHandle,
     display_id: Option<u32>,
@@ -49,15 +33,15 @@ pub fn resolve_scap_display_id(
             return Ok(id);
         }
     }
-    // Fall back to the primary monitor matched by physical size.
-    if let Ok(Some(primary)) = app.primary_monitor() {
-        let (pw, ph) = (primary.size().width as u64, primary.size().height as u64);
-        if let Some(t) = displays
-            .iter()
-            .find(|t| scap_display_size(t) == (pw, ph))
-        {
-            if let Target::Display(d) = t {
-                return Ok(d.id);
+    if let Ok(monitors) = app.available_monitors() {
+        if let Ok(Some(primary)) = app.primary_monitor() {
+            let idx = monitors.iter().position(|m| {
+                m.position() == primary.position() && m.size() == primary.size()
+            });
+            if let Some(idx) = idx {
+                if let Some(Target::Display(d)) = displays.get(idx) {
+                    return Ok(d.id);
+                }
             }
         }
     }

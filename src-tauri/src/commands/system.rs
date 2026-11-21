@@ -22,6 +22,7 @@ pub struct DisplayInfo {
 #[tauri::command]
 pub fn list_displays(app: AppHandle) -> Vec<DisplayInfo> {
     let primary_id = crate::capture::resolve_scap_display_id(&app, None).ok();
+    let monitors = app.available_monitors().unwrap_or_default();
     crate::capture::display_targets()
         .iter()
         .enumerate()
@@ -30,18 +31,17 @@ pub fn list_displays(app: AppHandle) -> Vec<DisplayInfo> {
                 scap::Target::Display(d) => d,
                 _ => return None,
             };
-            let (w, h) = crate::capture::scap_display_size(t);
-            let scale = scap::get_scale_factor(t) as f32;
+            let m = monitors.get(i);
+            let name = m
+                .and_then(|m| m.name().clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| format!("Display {}", i + 1));
             Some(DisplayInfo {
                 id: d.id,
-                name: if d.title.is_empty() {
-                    format!("Display {}", i + 1)
-                } else {
-                    d.title.clone()
-                },
-                width: w as u32,
-                height: h as u32,
-                scale_factor: scale,
+                name,
+                width: m.map_or(0, |m| m.size().width),
+                height: m.map_or(0, |m| m.size().height),
+                scale_factor: m.map_or(1.0, |m| m.scale_factor() as f32),
                 is_primary: primary_id.map_or(false, |p| p == d.id),
             })
         })
@@ -87,7 +87,10 @@ pub fn open_path(app: AppHandle, path: String, reveal: Option<bool>) -> Result<(
         p
     };
     app.shell()
-        .open(target.to_string_lossy().to_string(), None::<&str>)
+        .open(
+            target.to_string_lossy().to_string(),
+            None::<tauri_plugin_shell::open::Program>,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -109,7 +112,8 @@ pub fn copy_image_to_clipboard(path: String) -> Result<(), String> {
 pub fn export_gif(app: AppHandle, id: String) -> Result<(), String> {
     let item = {
         let st = app.state::<AppState>();
-        st.library.lock().unwrap().find(&id).ok_or("Item not found")?
+        let lib = st.library.lock().unwrap();
+        lib.find(&id).ok_or("Item not found")?
     };
     if item.kind != "video" {
         return Err("Only video recordings can be exported as GIF".into());
