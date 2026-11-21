@@ -1,0 +1,39 @@
+[package]
+name = "snappress"
+version = "0.1.0"
+description = "SnapPress - Screenpresso-style capture, scrolling capture and recording studio"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "snappress_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-shell = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = "0.25"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+
+# Screen capture (Windows: DirectX Graphics Capture, macOS: ScreenCaptureKit, Linux: X11)
+scap = "0.16"
+# Cross-platform cursor move + wheel scroll injection (scrolling capture)
+enigo = "0.2"
+# Image clipboard support
+arboard = "3"
+# ffmpeg discovery / on-demand download / raw frame piping (MP4 + GIF encoding)
+ffmpeg-sidecar = "1.1"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
