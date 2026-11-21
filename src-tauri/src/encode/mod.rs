@@ -114,10 +114,11 @@ pub fn run_record(
         }
         match capturer.get_next_frame() {
             Ok(scap::frame::Frame::BGRA(f)) => {
+                let (fw, fh) = (f.width.max(0) as u32, f.height.max(0) as u32);
                 capture::crop_bgra_into(
                     &f.data,
-                    f.width,
-                    f.height,
+                    fw,
+                    fh,
                     rx as i32,
                     ry as i32,
                     rw,

@@ -155,11 +155,15 @@ pub fn pick_tauri_monitor(
 ) -> Result<tauri::Monitor, String> {
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if let Some(id) = display_id {
-        let scap_monitors = scap::monitor::get_all();
-        if let Some(sm) = scap_monitors.iter().find(|m| m.id == id) {
+        let scap_displays = capture::display_targets();
+        if let Some(st) = scap_displays.iter().find(|t| match t {
+            scap::Target::Display(d) => d.id == id,
+            _ => false,
+        }) {
+            let (sw, sh) = capture::scap_display_size(st);
             if let Some(t) = monitors
                 .iter()
-                .find(|m| m.size().width as u32 == sm.width && m.size().height as u32 == sm.height)
+                .find(|m| m.size().width as u64 == sw && m.size().height as u64 == sh)
             {
                 return Ok(t.clone());
             }

@@ -24,8 +24,8 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 
-# Screen capture (Windows: DirectX Graphics Capture, macOS: ScreenCaptureKit, Linux: X11)
-scap = "0.16"
+# Screen capture (Windows: DXGI/Windows.Graphics.Capture, macOS: ScreenCaptureKit/CoreGraphics, Linux: X11)
+scap = "0.0.8"
 # Cross-platform cursor move + wheel scroll injection (scrolling capture)
 enigo = "0.2"
 # Image clipboard support

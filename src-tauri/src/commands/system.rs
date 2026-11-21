@@ -22,16 +22,28 @@ pub struct DisplayInfo {
 #[tauri::command]
 pub fn list_displays(app: AppHandle) -> Vec<DisplayInfo> {
     let primary_id = crate::capture::resolve_scap_display_id(&app, None).ok();
-    scap::monitor::get_all()
-        .into_iter()
+    crate::capture::display_targets()
+        .iter()
         .enumerate()
-        .map(|(i, m)| DisplayInfo {
-            id: m.id,
-            name: format!("Display {}", i + 1),
-            width: m.width,
-            height: m.height,
-            scale_factor: m.scale_factor as f32,
-            is_primary: primary_id.map_or(false, |p| p == m.id),
+        .filter_map(|(i, t)| {
+            let d = match t {
+                scap::Target::Display(d) => d,
+                _ => return None,
+            };
+            let (w, h) = crate::capture::scap_display_size(t);
+            let scale = scap::get_scale_factor(t) as f32;
+            Some(DisplayInfo {
+                id: d.id,
+                name: if d.title.is_empty() {
+                    format!("Display {}", i + 1)
+                } else {
+                    d.title.clone()
+                },
+                width: w as u32,
+                height: h as u32,
+                scale_factor: scale,
+                is_primary: primary_id.map_or(false, |p| p == d.id),
+            })
         })
         .collect()
 }

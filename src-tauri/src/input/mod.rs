@@ -1,4 +1,4 @@
-use enigo::{Coordinate, Enigo, Mouse, Settings};
+use enigo::{Axis, Coordinate, Enigo, Mouse, Settings};
 
 fn new_enigo() -> Result<Enigo, String> {
     Enigo::new(&Settings::default()).map_err(|e| format!("input injection unavailable: {e}"))
@@ -16,8 +16,8 @@ pub fn move_cursor(x: i32, y: i32) -> Result<(), String> {
 /// Scroll the mouse wheel down by the given number of wheel ticks.
 pub fn scroll_down(ticks: i32) -> Result<(), String> {
     let mut enigo = new_enigo()?;
-    // Negative vertical value = wheel down (content moves up) in enigo.
+    // With Axis::Vertical a positive length scrolls down in enigo 0.2.
     enigo
-        .scroll(0, -ticks.abs())
+        .scroll(ticks.abs(), Axis::Vertical)
         .map_err(|e| format!("failed to scroll: {e}"))
 }

@@ -1,7 +1,35 @@
 use image::RgbaImage;
 use scap::capturer::Capturer;
 use scap::frame::Frame;
+use scap::Target;
 use tauri::Manager;
+
+/// Enumerate scap display targets (scap 0.0.8 exposes displays via targets).
+pub fn display_targets() -> Vec<Target> {
+    scap::get_all_targets()
+        .into_iter()
+        .filter(|t| matches!(t, Target::Display(_)))
+        .collect()
+}
+
+/// Physical pixel size of a scap display target.
+/// On macOS `get_target_dimensions` returns logical points, so multiply by the
+/// scale factor; on Windows the monitor size is already physical pixels.
+pub fn scap_display_size(target: &Target) -> (u64, u64) {
+    let (w, h) = scap::get_target_dimensions(target);
+    #[cfg(target_os = "macos")]
+    {
+        let scale = scap::get_scale_factor(target).max(1.0);
+        (
+            (w as f64 * scale).round() as u64,
+            (h as f64 * scale).round() as u64,
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        (w, h)
+    }
+}
 
 /// Resolve a display id coming from the UI into a scap display id,
 /// falling back to the primary monitor (or the first monitor found).
@@ -9,41 +37,63 @@ pub fn resolve_scap_display_id(
     app: &tauri::AppHandle,
     display_id: Option<u32>,
 ) -> Result<u32, String> {
-    let monitors = scap::monitor::get_all();
+    let displays = display_targets();
+    if displays.is_empty() {
+        return Err("No displays detected".to_string());
+    }
     if let Some(id) = display_id {
-        if monitors.iter().any(|m| m.id == id) {
+        if displays.iter().any(|t| match t {
+            Target::Display(d) => d.id == id,
+            _ => false,
+        }) {
             return Ok(id);
         }
     }
     // Fall back to the primary monitor matched by physical size.
     if let Ok(Some(primary)) = app.primary_monitor() {
-        let (pw, ph) = (primary.size().width, primary.size().height);
-        if let Some(m) = monitors
+        let (pw, ph) = (primary.size().width as u64, primary.size().height as u64);
+        if let Some(t) = displays
             .iter()
-            .find(|m| m.width == pw && m.height == ph)
+            .find(|t| scap_display_size(t) == (pw, ph))
         {
-            return Ok(m.id);
+            if let Target::Display(d) = t {
+                return Ok(d.id);
+            }
         }
     }
-    monitors
-        .first()
-        .map(|m| m.id)
-        .ok_or_else(|| "No displays detected".to_string())
+    if let Some(Target::Display(d)) = displays.first() {
+        return Ok(d.id);
+    }
+    Err("No displays detected".to_string())
 }
 
 pub fn create_display_capturer(display_id: u32, fps: u32) -> Result<Capturer, String> {
+    let target = display_targets()
+        .into_iter()
+        .find(|t| match t {
+            Target::Display(d) => d.id == display_id,
+            _ => false,
+        })
+        .ok_or_else(|| format!("display {display_id} not found"))?;
     let options = scap::capturer::Options {
         fps: fps.max(1),
         output_type: scap::frame::FrameType::BGRAFrame,
-        source_type: scap::capturer::SourceType::Display(display_id),
+        target: Some(target),
+        show_cursor: false,
         ..Default::default()
     };
-    Ok(Capturer::new(options))
+    let mut capturer = Capturer::build(options)
+        .map_err(|e| format!("capturer init failed (screen permission missing?): {e}"))?;
+    capturer.start_capture();
+    Ok(capturer)
 }
 
-pub fn grab_from(capturer: &mut Capturer) -> Result<RgbaImage, String> {
+pub fn grab_from(capturer: &Capturer) -> Result<RgbaImage, String> {
     match capturer.get_next_frame() {
-        Ok(Frame::BGRA(f)) => Ok(bgra_to_rgba(&f.data, f.width, f.height)),
+        Ok(Frame::BGRA(f)) => {
+            let (w, h) = (f.width.max(0) as u32, f.height.max(0) as u32);
+            Ok(bgra_to_rgba(&f.data, w, h))
+        }
         Ok(_) => Err("Unsupported frame type".to_string()),
         Err(e) => Err(format!("capture failed: {e:?}")),
     }
