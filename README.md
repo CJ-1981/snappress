@@ -10,15 +10,44 @@ rebuilt in Rust with Tauri 2 for **Windows** and **macOS**.
 - Screen recording to MP4 (H.264) with GIF export from the library
 - Built-in annotation editor (arrows, shapes, pen, text, blur/pixelate, numbered
   steps, highlight, crop, undo/redo)
-- Capture library with thumbnails, clipboard copy, reveal-in-folder and delete
+- Capture library with thumbnails, clipboard copy, reveal-in-folder, delete-all
+  and auto-delete after a configurable period
 - Global hotkeys plus a system tray menu; the main window hides to tray on close
+
+## Screenshots
+
+| Capture | Library |
+| --- | --- |
+| ![Capture view](docs/screenshots/capture-view.png) | ![Library view](docs/screenshots/library-view.png) |
+| **Editor** | **Settings** |
+| ![Editor view](docs/screenshots/editor-view.png) | ![Settings dialog](docs/screenshots/settings-dialog.png) |
+
+Delete the whole library in one confirmed step:
+
+![Delete all](docs/screenshots/library-delete-all.png)
 
 ## Downloads
 
-Every push to `main` runs CI on GitHub Actions and produces installers for
-macOS (Apple Silicon + Intel) and Windows x64 — grab them from the workflow
-run's **Artifacts** section. Official releases are published automatically when
-a `v*` tag (e.g. `v0.1.0`) is pushed.
+Grab the latest installers from
+[Releases](https://github.com/CJ-1981/snappress/releases): DMGs for macOS
+(Apple Silicon + Intel) and NSIS/MSI installers for Windows x64. Releases are
+published automatically when a `v*` tag is pushed; every push to `main` also
+produces per-commit artifacts on the workflow run.
+
+### First launch on macOS
+
+The builds are ad-hoc signed (no Apple Developer certificate), so Gatekeeper
+takes one extra step the first time:
+
+1. Install and launch — macOS may say the app *"can't be verified"*.
+   Right-click the app and choose **Open**, or allow it under
+   System Settings → Privacy & Security ("Open Anyway").
+2. Grant **Screen Recording** when prompted (or use the banner in the app —
+   it opens the right pane for you and refreshes once granted).
+3. Scrolling capture additionally needs **Accessibility**.
+
+If macOS ever claims the app is *"damaged"*, strip the download quarantine
+flag once: `xattr -rd com.apple.quarantine /Applications/SnapPress.app`.
 
 ## Repository layout
 
@@ -119,6 +148,9 @@ Stored in the app data directory as `settings.json` (library index:
 
 - Recording FPS (15/24/30), GIF FPS and GIF width (used on export)
 - Scroll delay (ms), wheel ticks per step, max page height
+- Auto-delete library items: Never / 1 / 7 / 30 / 90 / 365 days. Pruning runs
+  at startup and whenever the library loads, deleting the capture files along
+  with the index entries.
 
 ## Known limitations (v1)
 
@@ -131,15 +163,20 @@ Stored in the app data directory as `settings.json` (library index:
 
 ## Troubleshooting
 
-- **Black frames or "capture failed" on macOS** - grant Screen Recording and
-  restart the app.
+- **Black frames or "capture failed" on macOS** - grant Screen Recording;
+  the app shows a banner with a shortcut to the right System Settings pane
+  and refreshes once the permission is granted. A restart may still be
+  required for a running capture to pick it up.
+- **"damaged and can't be opened" on macOS** - see "First launch on macOS"
+  above (download quarantine on an ad-hoc signed build).
 - **"failed to scroll" on macOS** - grant Accessibility permission.
 - **"ffmpeg has no stdin" / spawn errors** - make sure the first-run ffmpeg
   download completed; delete the `ffmpeg-exe` folder inside the app data
   directory to force a re-download.
-- **Crate API drift** - the Rust ecosystem crates used here are pinned by
-  minor version (`scap 0.16`, `enigo 0.2`, `ffmpeg-sidecar 1.1`,
-  `image 0.25`, `tauri 2`). If a dependency publishes breaking changes, pin
-  the exact patch version from `Cargo.lock` or adjust the small surface area
-  in `capture/mod.rs` (frame access), `input/mod.rs` (scroll sign/units) and
+- **Crate API drift** - `scap` 0.0.8 is vendored at `src-tauri/vendor/scap`
+  (patched for windows-capture 1.5.0, see `vendor/scap/VENDORED.md`) and
+  pinned via `[patch.crates-io]`; the remaining crates are version-pinned in
+  `Cargo.toml`/`Cargo.lock`. If a dependency publishes breaking changes, pin
+  the exact patch version or adjust the small surface area in
+  `capture/mod.rs` (frame access), `input/mod.rs` (scroll sign/units) and
   `encode/mod.rs` (ffmpeg arguments).
