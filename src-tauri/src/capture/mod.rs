@@ -2,12 +2,52 @@ use image::RgbaImage;
 use scap::capturer::Capturer;
 use scap::frame::Frame;
 use scap::Target;
-use tauri::Manager;
 
 pub mod stitch;
 
+// --- Screen Recording permission (macOS TCC) --------------------------------
+// scap→screencapturekit unwraps SCShareableContent, so without Screen
+// Recording access it panics — and panicking inside the WKWebView IPC
+// callback aborts the app on launch. Preflight the permission first so
+// every capture path degrades to a plain error instead.
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+/// Hint surfaced to the UI whenever a capture fails due to missing TCC access.
+pub const SCREEN_PERMISSION_HINT: &str = "SnapPress needs Screen Recording permission: open System Settings → Privacy & Security → Screen Recording, allow SnapPress, then restart the app.";
+
+/// True when macOS has already granted Screen Recording access.
+pub fn has_screen_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: stateless CoreGraphics/TCC query, no UI side effects.
+        unsafe { CGPreflightScreenCaptureAccess() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+/// Fire the macOS Screen Recording prompt (no-op once decided).
+/// Returns the current grant state.
+pub fn request_screen_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: CoreGraphics call; shows the system TCC prompt at most once.
+        unsafe { CGRequestScreenCaptureAccess() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
 /// Enumerate scap display targets (scap 0.0.8 exposes displays via targets).
 pub fn display_targets() -> Vec<Target> {
+    if !has_screen_permission() {
+        return Vec::new();
+    }
     scap::get_all_targets()
         .into_iter()
         .filter(|t| matches!(t, Target::Display(_)))
@@ -21,6 +61,9 @@ pub fn resolve_scap_display_id(
     app: &tauri::AppHandle,
     display_id: Option<u32>,
 ) -> Result<u32, String> {
+    if !has_screen_permission() {
+        return Err(SCREEN_PERMISSION_HINT.to_string());
+    }
     let displays = display_targets();
     if displays.is_empty() {
         return Err("No displays detected".to_string());
@@ -52,6 +95,9 @@ pub fn resolve_scap_display_id(
 }
 
 pub fn create_display_capturer(display_id: u32, fps: u32) -> Result<Capturer, String> {
+    if !has_screen_permission() {
+        return Err(SCREEN_PERMISSION_HINT.to_string());
+    }
     let target = display_targets()
         .into_iter()
         .find(|t| match t {

@@ -130,8 +130,22 @@ pub fn run() {
                 let _ = handle.emit("ffmpeg:status", serde_json::json!({ "ready": ready }));
             });
 
+            // Apply the auto-delete window to the persisted library on launch.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || library::prune_old_items(&handle));
+
             setup_tray(app)?;
             setup_shortcuts(app);
+
+            // On macOS, fire the Screen Recording prompt off the main thread
+            // when access is missing, so capture calls never hit scap's
+            // unwrap-on-denied panic inside the WebKit IPC handler.
+            #[cfg(target_os = "macos")]
+            std::thread::spawn(|| {
+                if !capture::has_screen_permission() {
+                    let _ = capture::request_screen_permission();
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -146,10 +160,14 @@ pub fn run() {
             commands::record::stop_recording,
             commands::record::pause_recording,
             commands::system::list_displays,
+            commands::system::screen_permission_status,
+            commands::system::request_screen_permission,
+            commands::system::open_screen_settings,
             commands::system::get_settings,
             commands::system::set_settings,
             commands::system::list_library,
             commands::system::delete_item,
+            commands::system::delete_all_items,
             commands::system::open_path,
             commands::system::get_library_dir,
             commands::system::copy_image_to_clipboard,

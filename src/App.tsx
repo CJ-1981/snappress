@@ -1,6 +1,6 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Aperture, Images, Scan, Settings } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import RecorderBar from './components/RecorderBar';
 import ScrollProgressCard from './components/ScrollProgressCard';
 import SettingsDialog from './components/SettingsDialog';
@@ -35,12 +35,44 @@ export default function App() {
     previewUrl: string | null;
   }>({ active: false, frames: 0, height: 0, previewUrl: null });
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [screenGranted, setScreenGranted] = useState<boolean | null>(null);
+  const pollPermission = useRef<ReturnType<typeof window.setInterval> | null>(null);
 
   const toast = useCallback((text: string, kind: 'ok' | 'err' = 'ok') => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind }]);
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200);
   }, []);
+
+  const refreshDisplays = useCallback(() => {
+    api.listDisplays()
+      .then((d) => {
+        setDisplays(d);
+        const primary = d.find((x) => x.isPrimary) ?? d[0];
+        setDisplayId(primary ? primary.id : null);
+      })
+      .catch(() => {});
+  }, []);
+
+  const checkPermission = useCallback(
+    (firePrompt: boolean) => {
+      api.screenPermission()
+        .then(async (granted) => {
+          setScreenGranted(granted);
+          if (!granted && firePrompt) await api.requestScreenPermission().catch(() => {});
+          if (granted) {
+            if (pollPermission.current) {
+              window.clearInterval(pollPermission.current);
+              pollPermission.current = null;
+            }
+            refreshDisplays();
+            toast('Screen Recording permission granted');
+          }
+        })
+        .catch(() => {});
+    },
+    [refreshDisplays, toast],
+  );
 
   const refreshLibrary = useCallback(() => {
     api.listLibrary()
@@ -56,16 +88,14 @@ export default function App() {
 
   useEffect(() => {
     refreshLibrary();
-    api.listDisplays()
-      .then((d) => {
-        setDisplays(d);
-        const primary = d.find((x) => x.isPrimary) ?? d[0];
-        setDisplayId(primary ? primary.id : null);
-      })
-      .catch(() => {});
+    refreshDisplays();
     api.getSettings()
       .then(setSettings)
       .catch(() => {});
+
+    // Ask macOS for Screen Recording on first launch; poll until granted.
+    checkPermission(true);
+    pollPermission.current = window.setInterval(() => checkPermission(false), 2500);
 
     const inactiveScroll = { active: false, frames: 0, height: 0, previewUrl: null };
     const unsubs: Promise<() => void>[] = [
@@ -119,8 +149,12 @@ export default function App() {
           .then((f) => f())
           .catch(() => {}),
       );
+      if (pollPermission.current) {
+        window.clearInterval(pollPermission.current);
+        pollPermission.current = null;
+      }
     };
-  }, [refreshLibrary, toast, openEditor]);
+  }, [refreshLibrary, refreshDisplays, checkPermission, toast, openEditor]);
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
@@ -147,6 +181,26 @@ export default function App() {
           </button>
         </nav>
       </header>
+
+      {screenGranted === false && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-300 sm:px-6">
+          <span>Screen Recording permission is required to capture your screen.</span>
+          <span className="flex gap-2">
+            <button
+              onClick={() => api.openScreenSettings().catch(() => {})}
+              className="rounded-lg border border-amber-500/50 px-2.5 py-1 transition hover:bg-amber-500/20"
+            >
+              Open System Settings
+            </button>
+            <button
+              onClick={() => checkPermission(false)}
+              className="rounded-lg px-2.5 py-1 text-amber-200/80 transition hover:text-amber-100"
+            >
+              Retry
+            </button>
+          </span>
+        </div>
+      )}
 
       <main className="min-h-0 flex-1 overflow-y-auto">
         {view === 'capture' && (

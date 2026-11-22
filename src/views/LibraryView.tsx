@@ -1,5 +1,6 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Copy, ExternalLink, FileOutput, FolderOpen, Images, Pencil, Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { api } from '../lib/api';
 import type { CaptureItem } from '../lib/types';
 
@@ -16,6 +17,8 @@ function formatSize(bytes: number): string {
 }
 
 export default function LibraryView({ items, onOpenEditor, toast }: Props) {
+  const [confirmAll, setConfirmAll] = useState(false);
+
   const act = async (fn: () => Promise<unknown>, ok?: string) => {
     try {
       await fn();
@@ -25,21 +28,57 @@ export default function LibraryView({ items, onOpenEditor, toast }: Props) {
     }
   };
 
+  const deleteAll = () =>
+    act(async () => {
+      const n = await api.deleteAllItems();
+      setConfirmAll(false);
+      toast(`Deleted ${n} item${n === 1 ? '' : 's'}`);
+    });
+
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-lg font-semibold">Library</h1>
-        <button
-          onClick={() =>
-            act(async () => {
-              const dir = await api.getLibraryDir();
-              await api.openPath(dir);
-            })
-          }
-          className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500"
-        >
-          <FolderOpen className="h-4 w-4" aria-hidden="true" /> Open folder
-        </button>
+        <div className="flex items-center gap-2">
+          {items.length > 0 &&
+            (confirmAll ? (
+              <>
+                <span className="text-xs text-zinc-400">
+                  Delete all {items.length} item{items.length === 1 ? '' : 's'}? This cannot be undone.
+                </span>
+                <button
+                  onClick={deleteAll}
+                  className="flex items-center gap-1.5 rounded-lg border border-red-500/60 bg-red-500/10 px-3 py-1.5 text-sm text-red-400 transition hover:bg-red-500/20"
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" /> Confirm
+                </button>
+                <button
+                  onClick={() => setConfirmAll(false)}
+                  className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setConfirmAll(true)}
+                className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-red-500/50 hover:text-red-400"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete all
+              </button>
+            ))}
+          <button
+            onClick={() =>
+              act(async () => {
+                const dir = await api.getLibraryDir();
+                await api.openPath(dir);
+              })
+            }
+            className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500"
+          >
+            <FolderOpen className="h-4 w-4" aria-hidden="true" /> Open folder
+          </button>
+        </div>
       </div>
 
       {items.length === 0 ? (

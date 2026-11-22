@@ -13,6 +13,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* The capture overlay shares this stylesheet for Tailwind, but its window
+   must stay see-through: overlay.html marks <html data-overlay> and wins via
+   higher specificity regardless of bundler CSS injection order. */
+html[data-overlay] body {
+  background: transparent;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

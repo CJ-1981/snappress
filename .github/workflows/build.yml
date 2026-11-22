@@ -64,7 +64,7 @@ jobs:
           # Create a GitHub Release only when a v* tag is pushed
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('SnapPress {0}', github.ref_name) || '' }}
-          releaseBody: "Download the installer for your platform below. macOS builds are unsigned - right-click the app and choose Open on first launch."
+          releaseBody: "Download the installer for your platform below. macOS builds are ad-hoc signed. If macOS says the app is damaged or can't be verified, run `xattr -rd com.apple.quarantine /Applications/SnapPress.app` once (or `xattr -d com.apple.quarantine <downloaded.dmg>` before installing)."
           releaseDraft: false
           prerelease: false
 

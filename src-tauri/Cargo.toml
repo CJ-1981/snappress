@@ -1,6 +1,6 @@
 [package]
 name = "snappress"
-version = "0.1.0"
+version = "0.1.1"
 description = "SnapPress - Screenpresso-style capture, scrolling capture and recording studio"
 edition = "2021"
 rust-version = "1.77"
@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "protocol-asset"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"
 
@@ -33,10 +33,16 @@ arboard = "3"
 # ffmpeg discovery / on-demand download / raw frame piping (MP4 + GIF encoding)
 ffmpeg-sidecar = "1.1"
 
-# scap 0.0.8's published Windows engine never compiled (its windows-capture
-# pin predates the API it uses). Use a fork patched for windows-capture 2.x.
+# scap 0.0.8's Windows engine targets windows-capture 1.3.6's 5-arg
+# Settings::new, but its "1.3.6" req floats to 1.5.0 (8-arg) and breaks
+# compilation. Vendored copy patches the two call sites for 1.5.0.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-capture = "=1.5.0"
+
+# Vendored scap: crates.io 0.0.8 plus a Windows-engine fix for
+# windows-capture 1.5.0 (see vendor/scap/VENDORED.md).
 [patch.crates-io]
-scap = { git = "https://github.com/CJ-1981/scap-win-fix", branch = "main" }
+scap = { path = "vendor/scap" }
 
 [profile.release]
 lto = true

@@ -142,6 +142,26 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
               ))}
             </select>
           </Field>
+          <Field label="Auto-delete library items">
+            <select
+              value={draft.autoDeleteDays}
+              onChange={(e) => set('autoDeleteDays', Number(e.target.value))}
+              className={selectCls}
+            >
+              {[
+                [0, 'Never'],
+                [1, 'After 1 day'],
+                [7, 'After 7 days'],
+                [30, 'After 30 days'],
+                [90, 'After 90 days'],
+                [365, 'After 365 days'],
+              ].map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
         </div>
 
         <div className="mt-6 flex justify-end gap-2">

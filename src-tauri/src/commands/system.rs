@@ -49,6 +49,31 @@ pub fn list_displays(app: AppHandle) -> Vec<DisplayInfo> {
 }
 
 #[tauri::command]
+pub fn screen_permission_status() -> bool {
+    crate::capture::has_screen_permission()
+}
+
+/// Shows the system Screen Recording prompt when still undetermined.
+#[tauri::command]
+pub fn request_screen_permission() -> bool {
+    crate::capture::request_screen_permission()
+}
+
+#[tauri::command]
+pub fn open_screen_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("failed to open System Settings: {e}"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("Not applicable on this platform".into())
+}
+
+#[tauri::command]
 pub fn get_settings(app: AppHandle) -> Settings {
     app.state::<AppState>().settings.lock().unwrap().clone()
 }
@@ -64,7 +89,14 @@ pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, Stri
 
 #[tauri::command]
 pub fn list_library(app: AppHandle) -> Vec<CaptureItem> {
+    // Apply the auto-delete window first so stale entries never surface.
+    crate::library::prune_old_items(&app);
     app.state::<AppState>().library.lock().unwrap().items.clone()
+}
+
+#[tauri::command]
+pub fn delete_all_items(app: AppHandle) -> Result<usize, String> {
+    crate::library::delete_all_items(&app)
 }
 
 #[tauri::command]

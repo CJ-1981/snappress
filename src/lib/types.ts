@@ -32,6 +32,8 @@ export interface AppSettings {
   scrollDelayMs: number;
   scrollStepTicks: number;
   maxScrollHeight: number;
+  /** Days after which library items are removed (0 = never). */
+  autoDeleteDays: number;
   theme: 'dark';
 }
 

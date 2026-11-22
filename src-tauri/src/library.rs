@@ -108,22 +108,63 @@ pub fn save_image_to_library(
     Ok(item)
 }
 
-pub fn delete_item(app: &AppHandle, id: &str) -> Result<(), String> {
+/// Remove every item matching `pred` from the library index and disk.
+/// Returns the removed entries; saves the index only when something changed.
+fn remove_matching<F>(app: &AppHandle, pred: F) -> Result<Vec<CaptureItem>, String>
+where
+    F: Fn(&CaptureItem) -> bool,
+{
     let state = app.state::<AppState>();
     let removed = {
         let mut lib = state.library.lock().unwrap();
-        let before = lib.items.len();
-        let removed: Vec<CaptureItem> = lib.items.iter().filter(|i| i.id == id).cloned().collect();
-        lib.items.retain(|i| i.id != id);
-        if lib.items.len() == before {
-            return Err("Item not found".into());
+        let removed: Vec<CaptureItem> = lib.items.iter().filter(|i| pred(i)).cloned().collect();
+        if removed.is_empty() {
+            return Ok(Vec::new());
         }
+        lib.items.retain(|i| !pred(i));
         lib.save(&state.index_path())?;
         removed
     };
-    for r in removed {
+    for r in &removed {
         let _ = std::fs::remove_file(&r.path);
     }
     app.emit("library:changed", ()).ok();
+    Ok(removed)
+}
+
+pub fn delete_item(app: &AppHandle, id: &str) -> Result<(), String> {
+    let removed = remove_matching(app, |i| i.id == id)?;
+    if removed.is_empty() {
+        return Err("Item not found".into());
+    }
     Ok(())
+}
+
+/// Delete every library entry (and its files). Returns how many were removed.
+pub fn delete_all_items(app: &AppHandle) -> Result<usize, String> {
+    let removed = remove_matching(app, |_| true)?;
+    Ok(removed.len())
+}
+
+/// Drop entries older than `settings.auto_delete_days` (0 disables pruning).
+/// Runs on startup and whenever the library is listed. Returns items removed.
+pub fn prune_old_items(app: &AppHandle) -> usize {
+    let days = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.lock().unwrap();
+        settings.auto_delete_days
+    };
+    if days == 0 {
+        return 0;
+    }
+    let cutoff = (chrono::Local::now() - chrono::Duration::days(days as i64)).fixed_offset();
+    let expired = |item: &CaptureItem| {
+        chrono::DateTime::parse_from_rfc3339(&item.created_at)
+            .map(|t| t < cutoff)
+            .unwrap_or(false) // keep entries with unparsable timestamps
+    };
+    match remove_matching(app, expired) {
+        Ok(removed) => removed.len(),
+        Err(_) => 0,
+    }
 }

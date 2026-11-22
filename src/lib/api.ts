@@ -50,6 +50,7 @@ export const api = {
   // library
   listLibrary: () => invoke<CaptureItem[]>('list_library'),
   deleteItem: (id: string) => invoke<void>('delete_item', { id }),
+  deleteAllItems: () => invoke<number>('delete_all_items'),
   openPath: (path: string, reveal?: boolean) =>
     invoke<void>('open_path', { path, reveal: reveal ?? null }),
   getLibraryDir: () => invoke<string>('get_library_dir'),
@@ -61,6 +62,9 @@ export const api = {
 
   // system
   listDisplays: () => invoke<DisplayInfo[]>('list_displays'),
+  screenPermission: () => invoke<boolean>('screen_permission_status'),
+  requestScreenPermission: () => invoke<boolean>('request_screen_permission'),
+  openScreenSettings: () => invoke<void>('open_screen_settings'),
   getSettings: () => invoke<AppSettings>('get_settings'),
   setSettings: (settings: AppSettings) => invoke<AppSettings>('set_settings', { settings }),
 };

@@ -11,6 +11,8 @@ pub struct Settings {
     pub scroll_delay_ms: u64,
     pub scroll_step_ticks: i32,
     pub max_scroll_height: u32,
+    /// Automatically remove library entries older than this many days (0 = off).
+    pub auto_delete_days: u32,
     pub theme: String,
 }
 
@@ -23,6 +25,7 @@ impl Default for Settings {
             scroll_delay_ms: 350,
             scroll_step_ticks: 5,
             max_scroll_height: 20_000,
+            auto_delete_days: 0,
             theme: "dark".to_string(),
         }
     }
@@ -49,5 +52,6 @@ impl Settings {
         self.scroll_delay_ms = self.scroll_delay_ms.clamp(80, 5000);
         self.scroll_step_ticks = self.scroll_step_ticks.clamp(1, 15);
         self.max_scroll_height = self.max_scroll_height.clamp(1_000, 100_000);
+        self.auto_delete_days = self.auto_delete_days.min(365);
     }
 }
