@@ -170,6 +170,11 @@ Stored in the app data directory as `settings.json` (library index:
 - **"damaged and can't be opened" on macOS** - see "First launch on macOS"
   above (download quarantine on an ad-hoc signed build).
 - **"failed to scroll" on macOS** - grant Accessibility permission.
+- **Where are the logs?** File logging goes to `snappress.log` in the app log
+  dir: `~/Library/Logs/app.snappress.desktop/` on macOS and
+  `%LOCALAPPDATA%\app.snappress.desktop\logs\` on Windows. Capture starts,
+  failures and ffmpeg state are all logged there — attach it when reporting
+  capture problems.
 - **"ffmpeg has no stdin" / spawn errors** - make sure the first-run ffmpeg
   download completed; delete the `ffmpeg-exe` folder inside the app data
   directory to force a re-download.

@@ -103,6 +103,21 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // File + stdout logging for post-mortem debugging (log dir:
+        // macOS ~/Library/Logs/app.snappress.desktop, Windows
+        // %LOCALAPPDATA%/app.snappress.desktop/logs, Linux $XDG_DATA_HOME).
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("snappress".into()),
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                ])
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         // Keep the app alive in the tray when the main window is closed.
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

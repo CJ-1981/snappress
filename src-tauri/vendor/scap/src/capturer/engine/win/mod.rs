@@ -32,8 +32,13 @@ enum Settings {
 }
 
 pub struct WCStream {
-    settings: Settings,
+    /// Taken by `start_capture`; dropped on a failed start so the frame
+    /// channel disconnects instead of waiting forever.
+    settings: Option<Settings>,
     capture_control: Option<CaptureControl<Capturer, Box<dyn std::error::Error + Send + Sync>>>,
+    /// Set when the capture session failed to start (e.g. Windows.Graphics.
+    /// Capture unavailable: VM/RDP session, pre-1903 Windows, GPU problem).
+    pub(crate) start_error: Option<String>,
 }
 
 impl GraphicsCaptureApiHandler for Capturer {
@@ -119,17 +124,26 @@ impl GraphicsCaptureApiHandler for Capturer {
 
 impl WCStream {
     pub fn start_capture(&mut self) {
-        let cc = match &self.settings {
-            Settings::Display(st) => Capturer::start_free_threaded(st.to_owned()).unwrap(),
-            Settings::Window(st) => Capturer::start_free_threaded(st.to_owned()).unwrap(),
+        let settings = self.settings.take().expect("capture already started");
+        let cc = match settings {
+            Settings::Display(st) => Capturer::start_free_threaded(st),
+            Settings::Window(st) => Capturer::start_free_threaded(st),
         };
-
-        self.capture_control = Some(cc)
+        match cc {
+            Ok(control) => self.capture_control = Some(control),
+            Err(e) => {
+                // Without the unwrap the caller's frame wait fails (the
+                // settings — and with them the frame channel sender — are
+                // dropped here) instead of panicking a random thread.
+                self.start_error = Some(e.to_string());
+            }
+        }
     }
 
     pub fn stop_capture(&mut self) {
-        let capture_control = self.capture_control.take().unwrap();
-        let _ = capture_control.stop();
+        if let Some(capture_control) = self.capture_control.take() {
+            let _ = capture_control.stop();
+        }
     }
 }
 
@@ -185,8 +199,9 @@ pub fn create_capturer(options: &Options, tx: mpsc::Sender<Frame>) -> WCStream {
     };
 
     WCStream {
-        settings,
+        settings: Some(settings),
         capture_control: None,
+        start_error: None,
     }
 }
 

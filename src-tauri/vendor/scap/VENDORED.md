@@ -13,11 +13,19 @@ not enough either: 1.3.6 lacks `capture::Context` and the
 
 ## Local changes
 
-The only modification is in `src/capturer/engine/win/mod.rs`: the two
-`Settings::new` call sites now pass `SecondaryWindowSettings::Default`,
-`MinimumUpdateIntervalSettings::Default` and `DirtyRegionSettings::Default`
-(new arguments introduced in windows-capture 1.5.0), and the import was
-extended accordingly. The workspace pins `windows-capture = "=1.5.0"`.
+1. `src/capturer/engine/win/mod.rs`: the two `Settings::new` call sites pass
+   `SecondaryWindowSettings::Default`, `MinimumUpdateIntervalSettings::Default`
+   and `DirtyRegionSettings::Default` (new arguments introduced in
+   windows-capture 1.5.0), with the import extended accordingly. The workspace
+   pins `windows-capture = "=1.5.0"`.
+2. Failure handling so broken capture sessions surface as errors instead of
+   panics or hangs:
+   - `start_capture` no longer unwraps `start_free_threaded`; a failed start
+     is recorded (`start_error`) and the settings — and with them the frame
+     channel sender — are dropped, so frame waits fail promptly.
+   - `stop_capture` no longer unwraps when the session never started.
+   - `Capturer::get_next_frame` now times out after 15s per frame and returns
+     a descriptive error instead of blocking forever.
 
 Everything else matches crates.io scap 0.0.8 (non-essential files removed:
 banner assets, changelog, CI config). Snappress wires it in via

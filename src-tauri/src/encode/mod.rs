@@ -24,9 +24,13 @@ pub fn check_ffmpeg() -> bool {
         Ok(mut child) => {
             let _ = child.kill();
             let _ = child.wait();
+            log::info!("ffmpeg available");
             true
         }
-        Err(_) => false,
+        Err(_) => {
+            log::info!("ffmpeg not found yet; recording will download it on first use");
+            false
+        }
     }
 }
 

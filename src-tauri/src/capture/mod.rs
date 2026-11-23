@@ -66,6 +66,7 @@ pub fn resolve_scap_display_id(
     }
     let displays = display_targets();
     if displays.is_empty() {
+        log::warn!("no scap display targets found (capture targets enumeration failed)");
         return Err("No displays detected".to_string());
     }
     if let Some(id) = display_id {
@@ -89,6 +90,7 @@ pub fn resolve_scap_display_id(
         }
     }
     if let Some(Target::Display(d)) = displays.first() {
+        log::info!("resolved capture display {} of {} target(s)", d.id, displays.len());
         return Ok(d.id);
     }
     Err("No displays detected".to_string())
@@ -112,9 +114,15 @@ pub fn create_display_capturer(display_id: u32, fps: u32) -> Result<Capturer, St
         show_cursor: false,
         ..Default::default()
     };
-    let mut capturer = Capturer::build(options)
-        .map_err(|e| format!("capturer init failed (screen permission missing?): {e}"))?;
+    log::info!("building capturer for display {display_id} @ {}fps", fps.max(1));
+    let mut capturer = Capturer::build(options).map_err(|e| {
+        log::warn!("capturer build failed: {e}");
+        format!("capturer init failed (screen permission missing?): {e}")
+    })?;
     capturer.start_capture();
+    if let Some(e) = capturer.take_start_error() {
+        log::warn!("capture session failed to start: {e}");
+    }
     Ok(capturer)
 }
 
@@ -125,7 +133,14 @@ pub fn grab_from(capturer: &Capturer) -> Result<RgbaImage, String> {
             Ok(bgra_to_rgba(&f.data, w, h))
         }
         Ok(_) => Err("Unsupported frame type".to_string()),
-        Err(e) => Err(format!("capture failed: {e:?}")),
+        Err(e) => {
+            log::warn!("grab_from failed: {e}");
+            #[cfg(target_os = "windows")]
+            let hint = " On Windows this usually means Windows.Graphics.Capture could not run — it needs Windows 10 1903+, a GPU with D3D11, and a normal desktop session (not RDP/VM without GPU).";
+            #[cfg(not(target_os = "windows"))]
+            let hint = "";
+            Err(format!("capture failed: {e}.{hint}"))
+        }
     }
 }
 

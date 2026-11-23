@@ -76,6 +76,7 @@ pub struct Options {
 pub struct Capturer {
     engine: engine::Engine,
     rx: mpsc::Receiver<ChannelItem>,
+    start_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -107,7 +108,7 @@ impl Capturer {
         let (tx, rx) = mpsc::channel();
         let engine = engine::Engine::new(&options, tx);
 
-        Capturer { engine, rx }
+        Capturer { engine, rx, start_error: None }
     }
 
     /// Build a new [Capturer] instance with the provided options
@@ -123,7 +124,7 @@ impl Capturer {
         let (tx, rx) = mpsc::channel();
         let engine = engine::Engine::new(&options, tx);
 
-        Ok(Capturer { engine, rx })
+        Ok(Capturer { engine, rx, start_error: None })
     }
 
     // TODO
@@ -131,6 +132,9 @@ impl Capturer {
     /// Start capturing the frames
     pub fn start_capture(&mut self) {
         self.engine.start();
+        if let Some(e) = self.engine.take_start_error() {
+            self.start_error = Some(e);
+        }
     }
 
     /// Stop the capturer
@@ -138,13 +142,35 @@ impl Capturer {
         self.engine.stop();
     }
 
-    /// Get the next captured frame
-    pub fn get_next_frame(&self) -> Result<Frame, mpsc::RecvError> {
-        loop {
-            let res = self.rx.recv()?;
+    /// Returns and clears the startup failure recorded by the engine, if any.
+    pub fn take_start_error(&mut self) -> Option<String> {
+        self.start_error.take()
+    }
 
-            if let Some(frame) = self.engine.process_channel_item(res) {
-                return Ok(frame);
+    /// Get the next captured frame.
+    ///
+    /// Waits at most 15 seconds per frame; a session that produces no frames
+    /// (e.g. a failed Windows.Graphics.Capture start, or a GPU driver issue)
+    /// returns an error instead of blocking the caller forever.
+    pub fn get_next_frame(&self) -> Result<Frame, String> {
+        if let Some(e) = &self.start_error {
+            return Err(format!("capture session failed to start: {e}"));
+        }
+        loop {
+            match self.rx.recv_timeout(std::time::Duration::from_secs(15)) {
+                Ok(item) => {
+                    if let Some(frame) = self.engine.process_channel_item(item) {
+                        return Ok(frame);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(
+                        "timed out after 15s waiting for capture frames — the capture session never produced a frame".into(),
+                    );
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("capture session ended without delivering any frames".into());
+                }
             }
         }
     }

@@ -125,6 +125,16 @@ impl Engine {
         get_output_frame_size(&self.options)
     }
 
+    /// Returns and clears the startup failure recorded by the Windows engine
+    /// (None on other platforms).
+    pub fn take_start_error(&mut self) -> Option<String> {
+        #[cfg(target_os = "windows")]
+        return self.win.start_error.take();
+
+        #[cfg(not(target_os = "windows"))]
+        None
+    }
+
     pub fn process_channel_item(&self, data: ChannelItem) -> Option<Frame> {
         #[cfg(target_os = "macos")]
         {
