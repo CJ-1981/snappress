@@ -1,5 +1,7 @@
 pub mod engine;
 
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{error::Error, sync::mpsc};
 
 use engine::ChannelItem;
@@ -77,7 +79,40 @@ pub struct Capturer {
     engine: engine::Engine,
     rx: mpsc::Receiver<ChannelItem>,
     start_error: Option<String>,
+    /// Why the frame handler stopped (Windows).
+    handler_error: Arc<Mutex<Option<String>>>,
 }
+
+/// Why no frame could be delivered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaptureError {
+    /// The capture session never came up; carries the platform's reason.
+    NotStarted(String),
+    /// The session is running but produced no frame within the wait.
+    Timeout,
+    /// The session stopped delivering frames; carries the handler's reason
+    /// when it stopped because of a failure.
+    Ended(Option<String>),
+}
+
+impl std::fmt::Display for CaptureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CaptureError::NotStarted(e) => {
+                write!(f, "capture session failed to start: {e}")
+            }
+            CaptureError::Timeout => {
+                write!(f, "timed out waiting for a capture frame — the capture session is running but produced none")
+            }
+            CaptureError::Ended(None) => {
+                write!(f, "capture session ended without delivering a frame")
+            }
+            CaptureError::Ended(Some(e)) => write!(f, "capture session failed: {e}"),
+        }
+    }
+}
+
+impl Error for CaptureError {}
 
 #[derive(Debug)]
 pub enum CapturerBuildError {
@@ -107,8 +142,9 @@ impl Capturer {
     pub fn new(options: Options) -> Capturer {
         let (tx, rx) = mpsc::channel();
         let engine = engine::Engine::new(&options, tx);
+        let handler_error = engine.handler_error_slot();
 
-        Capturer { engine, rx, start_error: None }
+        Capturer { engine, rx, start_error: None, handler_error }
     }
 
     /// Build a new [Capturer] instance with the provided options
@@ -123,8 +159,9 @@ impl Capturer {
 
         let (tx, rx) = mpsc::channel();
         let engine = engine::Engine::new(&options, tx);
+        let handler_error = engine.handler_error_slot();
 
-        Ok(Capturer { engine, rx, start_error: None })
+        Ok(Capturer { engine, rx, start_error: None, handler_error })
     }
 
     // TODO
@@ -147,29 +184,30 @@ impl Capturer {
         self.start_error.take()
     }
 
-    /// Get the next captured frame.
+    /// Get the next captured frame, waiting up to 15 seconds.
+    pub fn get_next_frame(&self) -> Result<Frame, CaptureError> {
+        self.get_next_frame_with_timeout(Duration::from_secs(15))
+    }
+
+    /// Get the next captured frame, waiting at most `timeout`.
     ///
-    /// Waits at most 15 seconds per frame; a session that produces no frames
-    /// (e.g. a failed Windows.Graphics.Capture start, or a GPU driver issue)
-    /// returns an error instead of blocking the caller forever.
-    pub fn get_next_frame(&self) -> Result<Frame, String> {
+    /// A session that produces no frames (e.g. a GPU driver issue) returns
+    /// [`CaptureError::Timeout`] instead of blocking the caller forever.
+    pub fn get_next_frame_with_timeout(&self, timeout: Duration) -> Result<Frame, CaptureError> {
         if let Some(e) = &self.start_error {
-            return Err(format!("capture session failed to start: {e}"));
+            return Err(CaptureError::NotStarted(e.clone()));
         }
         loop {
-            match self.rx.recv_timeout(std::time::Duration::from_secs(15)) {
+            match self.rx.recv_timeout(timeout) {
                 Ok(item) => {
                     if let Some(frame) = self.engine.process_channel_item(item) {
                         return Ok(frame);
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(
-                        "timed out after 15s waiting for capture frames — the capture session never produced a frame".into(),
-                    );
-                }
+                Err(mpsc::RecvTimeoutError::Timeout) => return Err(CaptureError::Timeout),
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err("capture session ended without delivering any frames".into());
+                    let reason = self.handler_error.lock().ok().and_then(|mut e| e.take());
+                    return Err(CaptureError::Ended(reason));
                 }
             }
         }

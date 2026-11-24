@@ -67,6 +67,8 @@ export const api = {
   openScreenSettings: () => invoke<void>('open_screen_settings'),
   getSettings: () => invoke<AppSettings>('get_settings'),
   setSettings: (settings: AppSettings) => invoke<AppSettings>('set_settings', { settings }),
+  copyDiagnostics: () => invoke<string>('copy_diagnostics'),
+  openLogFolder: () => invoke<void>('open_log_folder'),
 };
 
 export function onEvent<T>(name: string, cb: (payload: T) => void): Promise<UnlistenFn> {

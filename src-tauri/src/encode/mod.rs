@@ -101,10 +101,11 @@ pub fn run_record(
         .spawn()
         .map_err(|e| format!("failed to start ffmpeg: {e}"))?;
     let mut stdin = child.take_stdin().ok_or("ffmpeg has no stdin")?;
-    let mut capturer = capture::create_display_capturer(job.display_id, job.fps)?;
+    let capturer = capture::create_display_capturer(job.display_id, job.fps)?;
 
     let start = Instant::now();
     let mut last_tick = Instant::now();
+    let mut failure: Option<String> = None;
     let mut frames: u64 = 0;
     let mut buf = vec![0u8; rw as usize * rh as usize * 4];
 
@@ -135,7 +136,14 @@ pub fn run_record(
                 frames += 1;
             }
             Ok(_) => {}
-            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+            // A static screen produces no frames; that is not a failure.
+            Err(scap::capturer::CaptureError::Timeout) => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            Err(e) => {
+                failure = Some(e.to_string());
+                break;
+            }
         }
         if last_tick.elapsed() >= Duration::from_secs(1) {
             app.emit(
@@ -154,6 +162,10 @@ pub fn run_record(
     drop(stdin);
     let _ = child.wait();
 
+    if let Some(e) = failure {
+        let _ = std::fs::remove_file(&job.out);
+        return Err(e);
+    }
     if frames == 0 || !job.out.exists() {
         let _ = std::fs::remove_file(&job.out);
         return Ok(None);

@@ -6,6 +6,8 @@ mod library;
 mod settings;
 mod state;
 
+use std::sync::atomic::Ordering;
+
 use state::AppState;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -40,15 +42,7 @@ fn setup_shortcuts(app: &tauri::App) {
         let result = gs.on_shortcut(key, move |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 match action {
-                    "image" => {
-                        let _ = commands::overlay::open_overlay(app, "image", None);
-                    }
-                    "scroll" => {
-                        let _ = commands::overlay::open_overlay(app, "scroll", None);
-                    }
-                    "record" => {
-                        let _ = commands::overlay::open_overlay(app, "record", None);
-                    }
+                    "image" | "scroll" | "record" => commands::overlay::spawn_overlay(app, action),
                     _ => {
                         let _ = commands::record::stop_recording_impl(app);
                     }
@@ -83,15 +77,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 let _ = w.set_focus();
             }
         }
-        "capture" => {
-            let _ = commands::overlay::open_overlay(app, "image", None);
-        }
-        "scroll" => {
-            let _ = commands::overlay::open_overlay(app, "scroll", None);
-        }
-        "record" => {
-            let _ = commands::overlay::open_overlay(app, "record", None);
-        }
+        "capture" => commands::overlay::spawn_overlay(app, "image"),
+        "scroll" => commands::overlay::spawn_overlay(app, "scroll"),
+        "record" => commands::overlay::spawn_overlay(app, "record"),
         "quit" => app.exit(0),
         _ => {}
     })
@@ -118,14 +106,29 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
-        // Keep the app alive in the tray when the main window is closed.
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            // Keep the app alive in the tray when the main window is closed.
+            WindowEvent::CloseRequested { api, .. } => {
                 if window.label() == "main" {
                     let _ = window.hide();
                     api.prevent_close();
                 }
             }
+            // Whenever the overlay goes away (Esc, Alt+F4), the main window
+            // comes back — unless a grab is using its absence or a new
+            // overlay is about to replace it.
+            WindowEvent::Destroyed => {
+                if window.label() == "overlay" {
+                    let app = window.app_handle();
+                    let st = app.state::<AppState>();
+                    let busy = st.capture_in_flight.load(Ordering::SeqCst)
+                        || st.overlay_opening.load(Ordering::SeqCst);
+                    if !busy {
+                        commands::overlay::show_main(app);
+                    }
+                }
+            }
+            _ => {}
         })
         .setup(|app| {
             let data_dir = app
@@ -149,6 +152,10 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || library::prune_old_items(&handle));
 
+            // Put the capture environment in the log file up front.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || commands::diagnostics::log_environment(&handle));
+
             setup_tray(app)?;
             setup_shortcuts(app);
 
@@ -167,7 +174,7 @@ pub fn run() {
             commands::overlay::start_region_capture,
             commands::overlay::overlay_ready,
             commands::overlay::cancel_capture,
-            commands::overlay::capture_full_screen,
+            commands::capture::capture_full_screen,
             commands::capture::capture_region,
             commands::capture::start_scroll_capture,
             commands::capture::cancel_scroll_capture,
@@ -189,6 +196,8 @@ pub fn run() {
             commands::system::export_gif,
             commands::system::save_edited,
             commands::system::read_image_base64,
+            commands::diagnostics::copy_diagnostics,
+            commands::diagnostics::open_log_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running snappress");

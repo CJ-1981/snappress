@@ -135,6 +135,16 @@ impl Engine {
         None
     }
 
+    /// Slot the Windows frame handler reports its stop reason to. Returns an
+    /// unused slot on other platforms.
+    pub fn handler_error_slot(&self) -> std::sync::Arc<std::sync::Mutex<Option<String>>> {
+        #[cfg(target_os = "windows")]
+        return self.win.handler_error.clone();
+
+        #[cfg(not(target_os = "windows"))]
+        std::sync::Arc::new(std::sync::Mutex::new(None))
+    }
+
     pub fn process_channel_item(&self, data: ChannelItem) -> Option<Frame> {
         #[cfg(target_os = "macos")]
         {

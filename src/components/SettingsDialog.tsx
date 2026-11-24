@@ -35,6 +35,25 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
 
+  const [diagnostics, setDiagnostics] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  const copyDiagnostics = async () => {
+    try {
+      await api.copyDiagnostics();
+      setDiagnostics('copied');
+    } catch {
+      setDiagnostics('failed');
+    }
+  };
+
+  const openLogFolder = async () => {
+    try {
+      await api.openLogFolder();
+    } catch {
+      setDiagnostics('failed');
+    }
+  };
+
   const save = async () => {
     try {
       const s = await api.setSettings(draft);
@@ -54,7 +73,7 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl"
+        className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -162,6 +181,37 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
               ))}
             </select>
           </Field>
+          <div className="border-t border-zinc-800 pt-4">
+            <span className="mb-2 block text-xs font-medium text-zinc-400">Troubleshooting</span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={copyDiagnostics}
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition hover:border-emerald-500/50 hover:text-emerald-400"
+              >
+                Copy diagnostics
+              </button>
+              <button
+                onClick={openLogFolder}
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition hover:border-emerald-500/50 hover:text-emerald-400"
+              >
+                Open log folder
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">
+              Diagnostics list your displays and capture details with the last log lines. Paste them
+              when reporting a capture problem.
+            </p>
+            {diagnostics === 'copied' && (
+              <p role="status" className="mt-1 text-xs text-emerald-400">
+                Copied to the clipboard.
+              </p>
+            )}
+            {diagnostics === 'failed' && (
+              <p role="status" className="mt-1 text-xs text-red-400">
+                That did not work. The log folder is listed under “Where are the logs?” in the README.
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="mt-6 flex justify-end gap-2">

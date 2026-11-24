@@ -18,14 +18,21 @@ not enough either: 1.3.6 lacks `capture::Context` and the
    and `DirtyRegionSettings::Default` (new arguments introduced in
    windows-capture 1.5.0), with the import extended accordingly. The workspace
    pins `windows-capture = "=1.5.0"`.
-2. Failure handling so broken capture sessions surface as errors instead of
-   panics or hangs:
-   - `start_capture` no longer unwraps `start_free_threaded`; a failed start
-     is recorded (`start_error`) and the settings — and with them the frame
-     channel sender — are dropped, so frame waits fail promptly.
-   - `stop_capture` no longer unwraps when the session never started.
-   - `Capturer::get_next_frame` now times out after 15s per frame and returns
-     a descriptive error instead of blocking forever.
+2. Session lifecycle. Upstream never stops a session unless the caller does:
+   the capture thread then outlives the `Capturer` with a dead receiver, and
+   the next frame hits `tx.send(..).expect(..)` inside the WinRT frame
+   callback, which aborts the whole process. Now:
+   - dropping the engine stops the session (frames are halted at once; the
+     join that tears the session down runs on a helper thread, so a session
+     that will not shut up cannot wedge whoever drops the capturer);
+   - the frame callback never panics: failures are returned, and a dropped
+     receiver ends the session;
+   - a failed start is recorded (`start_error`), and bringing a session up is
+     bounded by a timeout instead of blocking on the capture thread.
+3. Errors. `Capturer::get_next_frame` returns `CaptureError`
+   (`NotStarted` / `Timeout` / `Ended`) and takes an explicit timeout via
+   `get_next_frame_with_timeout`, instead of blocking forever; the reason the
+   frame handler stopped is passed back to the caller.
 
 Everything else matches crates.io scap 0.0.8 (non-essential files removed:
 banner assets, changelog, CI config). Snappress wires it in via

@@ -40,6 +40,8 @@ ffmpeg-sidecar = "1.1"
 # compilation. Vendored copy patches the two call sites for 1.5.0.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-capture = "=1.5.0"
+# GDI fallback capture + diagnostics (same version scap uses).
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Graphics_Gdi"] }
 
 # Vendored scap: crates.io 0.0.8 plus a Windows-engine fix for
 # windows-capture 1.5.0 (see vendor/scap/VENDORED.md).

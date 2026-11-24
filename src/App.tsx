@@ -35,13 +35,14 @@ export default function App() {
     previewUrl: string | null;
   }>({ active: false, frames: 0, height: 0, previewUrl: null });
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [captureError, setCaptureError] = useState<string | null>(null);
   const [screenGranted, setScreenGranted] = useState<boolean | null>(null);
   const pollPermission = useRef<ReturnType<typeof window.setInterval> | null>(null);
 
-  const toast = useCallback((text: string, kind: 'ok' | 'err' = 'ok') => {
+  const toast = useCallback((text: string, kind: 'ok' | 'err' = 'ok', ms = 4200) => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200);
+    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), ms);
   }, []);
 
   const refreshDisplays = useCallback(() => {
@@ -101,8 +102,15 @@ export default function App() {
     const unsubs: Promise<() => void>[] = [
       onEvent('library:changed', () => refreshLibrary()),
       onEvent<CaptureItem>('capture:saved', (item) => {
+        setCaptureError(null);
         if (item.kind === 'image') openEditor(item);
         else toast('Capture saved to library');
+      }),
+      // Raised by the backend whenever a capture fails: the overlay is usually
+      // already gone by then, so the main window has to be the one to say it.
+      onEvent<{ message: string }>('capture:error', (p) => {
+        setCaptureError(p.message);
+        toast(p.message, 'err', 10000);
       }),
       onEvent('recording:started', () => setRec({ active: true, elapsedMs: 0, paused: false })),
       onEvent<{ elapsedMs: number }>('recording:tick', (p) =>
@@ -211,6 +219,8 @@ export default function App() {
             items={items}
             ffmpegReady={ffmpegReady}
             onOpenEditor={openEditor}
+            captureError={captureError}
+            onDismissCaptureError={() => setCaptureError(null)}
           />
         )}
         {view === 'library' && <LibraryView items={items} onOpenEditor={openEditor} toast={toast} />}

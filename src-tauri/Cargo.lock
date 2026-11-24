@@ -4671,6 +4671,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-shell",
  "uuid",
+ "windows 0.58.0",
  "windows-capture",
 ]
 

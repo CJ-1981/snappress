@@ -1,8 +1,23 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
 use crate::library::LibraryFile;
 use crate::settings::Settings;
+
+/// Why the last still capture had to skip Windows.Graphics.Capture.
+static GDI_FALLBACK: Mutex<Option<String>> = Mutex::new(None);
+
+/// Note that a capture fell back to GDI because of `reason`.
+#[cfg(target_os = "windows")]
+pub fn record_gdi_fallback(reason: &str) {
+    *GDI_FALLBACK.lock().unwrap() = Some(reason.to_string());
+}
+
+/// The reason of the most recent GDI fallback, for diagnostics.
+pub fn gdi_fallback() -> Option<String> {
+    GDI_FALLBACK.lock().unwrap().clone()
+}
 
 pub struct RecordingHandle {
     pub stop: Arc<std::sync::atomic::AtomicBool>,
@@ -27,6 +42,15 @@ pub struct AppState {
     pub recording: Mutex<Option<RecordingHandle>>,
     pub scrolling: Mutex<Option<ScrollHandle>>,
     pub pending_overlay: Mutex<Option<PendingOverlay>>,
+    /// Set while the main window is hidden for a grab, so the overlay going
+    /// away is not mistaken for a cancelled capture.
+    pub capture_in_flight: AtomicBool,
+    /// Set while an overlay is being replaced by a new one, so the old one
+    /// going away is not mistaken for a cancelled capture.
+    pub overlay_opening: AtomicBool,
+    /// Bumped whenever a capture starts or ends; lets a watchdog tell whether
+    /// the capture it was started for is still the current one.
+    pub capture_generation: AtomicU64,
 }
 
 impl AppState {
@@ -40,6 +64,9 @@ impl AppState {
             recording: Mutex::new(None),
             scrolling: Mutex::new(None),
             pending_overlay: Mutex::new(None),
+            capture_in_flight: AtomicBool::new(false),
+            overlay_opening: AtomicBool::new(false),
+            capture_generation: AtomicU64::new(0),
         }
     }
 

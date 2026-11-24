@@ -112,9 +112,11 @@ logged to the console and do not prevent startup.
 `start_region_capture` creates a borderless, transparent, always-on-top window
 sized to the chosen monitor. The overlay page measures the dragged rectangle in
 CSS pixels, converts to physical pixels with `devicePixelRatio`, and invokes
-`capture_region`. The backend closes the overlay, grabs a full frame from
-`scap` (DirectX Graphics Capture on Windows, ScreenCaptureKit on macOS) and
-crops the saved PNG.
+`capture_region`. The backend closes the overlay, grabs a full frame and
+crops the saved PNG. The frame comes from Windows.Graphics.Capture on Windows
+and ScreenCaptureKit on macOS; when the former cannot run, the capture is
+retried through GDI. Capture sessions are stopped as soon as they are dropped,
+and every wait is bounded, so a capture ends in an image or a visible error.
 
 ### Scrolling capture
 `run_scroll_session` (in `src-tauri/src/capture/stitch.rs`) moves the cursor
@@ -154,8 +156,11 @@ Stored in the app data directory as `settings.json` (library index:
 
 ## Known limitations (v1)
 
-- Display-to-monitor mapping matches physical sizes, so two identical monitors
-  may be swapped in multi-monitor setups.
+- On macOS, displays are paired with monitors by enumeration order when their
+  names are not unique, so two identical monitors may be swapped. Windows
+  pairs them by device name, which is exact.
+- On Windows, captures taken through the GDI fallback never include the
+  mouse cursor.
 - Fixed headers/sidebars inside scrollable pages can produce ghosting in
   stitched captures (typical for this class of tool).
 - Recording is MP4 only; GIF is produced by converting a recording.
@@ -163,10 +168,23 @@ Stored in the app data directory as `settings.json` (library index:
 
 ## Troubleshooting
 
+- **A capture fails** - the main window comes back and shows the reason in a
+  red banner on the Capture tab (and as a toast). Captures cannot leave the
+  app hidden: a watchdog brings the window back after 30 seconds whatever
+  went wrong.
 - **Black frames or "capture failed" on macOS** - grant Screen Recording;
   the app shows a banner with a shortcut to the right System Settings pane
   and refreshes once the permission is granted. A restart may still be
   required for a running capture to pick it up.
+- **"capture session failed to start" on Windows** - Windows.Graphics.Capture
+  is unavailable on that machine (common in remote desktop and VM sessions,
+  or with some GPU drivers). Region, full-screen and scrolling captures fall
+  back to plain GDI automatically; screen recording needs
+  Windows.Graphics.Capture and does not.
+- **Reporting a capture problem** - open Settings → Troubleshooting →
+  **Copy diagnostics** and paste the result. It lists every display with the
+  monitor that shows it, whether the capture API is available, any fallback
+  in use, and the last log lines.
 - **"damaged and can't be opened" on macOS** - see "First launch on macOS"
   above (download quarantine on an ad-hoc signed build).
 - **"failed to scroll" on macOS** - grant Accessibility permission.

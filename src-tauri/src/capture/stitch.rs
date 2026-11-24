@@ -181,8 +181,7 @@ pub fn run_scroll_session(
         region.cursor.1 + (region.height / 2) as i32,
     )?;
 
-    let mut capturer = capture::create_display_capturer(display_id, 30)?;
-    let first = capture::grab_from(&mut capturer)?;
+    let (mut grabber, first) = capture::DisplayGrabber::start(display_id, 30)?;
     let mut stitched =
         capture::crop_rgba(&first, region.x, region.y, region.width, region.height)?;
     let mut bottom = row_profiles(&stitched);
@@ -204,7 +203,18 @@ pub fn run_scroll_session(
         input::scroll_down(cfg.step_ticks)?;
         std::thread::sleep(Duration::from_millis(cfg.delay_ms));
 
-        let full = capture::grab_from(&mut capturer)?;
+        // Nothing new within the wait means the page stopped moving: the OS
+        // only delivers frames while the screen changes.
+        let full = match grabber.grab(Duration::from_millis(800))? {
+            capture::Grab::Frame(full) => full,
+            capture::Grab::Unchanged => {
+                stalls += 1;
+                if stalls >= 2 {
+                    break;
+                }
+                continue;
+            }
+        };
         let shot = capture::crop_rgba(&full, region.x, region.y, region.width, region.height)?;
         frames += 1;
 

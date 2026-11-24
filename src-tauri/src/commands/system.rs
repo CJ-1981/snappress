@@ -22,8 +22,8 @@ pub struct DisplayInfo {
 #[tauri::command]
 pub fn list_displays(app: AppHandle) -> Vec<DisplayInfo> {
     let primary_id = crate::capture::resolve_scap_display_id(&app, None).ok();
-    let monitors = app.available_monitors().unwrap_or_default();
-    crate::capture::display_targets()
+    let map = crate::capture::DisplayMap::build(&app, crate::capture::display_targets());
+    map.displays()
         .iter()
         .enumerate()
         .filter_map(|(i, t)| {
@@ -31,14 +31,10 @@ pub fn list_displays(app: AppHandle) -> Vec<DisplayInfo> {
                 scap::Target::Display(d) => d,
                 _ => return None,
             };
-            let m = monitors.get(i);
-            let name = m
-                .and_then(|mm| mm.name().cloned())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| format!("Display {}", i + 1));
+            let m = map.monitor_of(d.id);
             Some(DisplayInfo {
                 id: d.id,
-                name,
+                name: display_name(m.and_then(|m| m.name()).map(String::as_str), i),
                 width: m.map_or(0, |m| m.size().width),
                 height: m.map_or(0, |m| m.size().height),
                 scale_factor: m.map_or(1.0, |m| m.scale_factor() as f32),
@@ -46,6 +42,22 @@ pub fn list_displays(app: AppHandle) -> Vec<DisplayInfo> {
             })
         })
         .collect()
+}
+
+/// What to call a display in the UI. Windows only offers the device name
+/// (`\\.\DISPLAY2`), which reads better as "Display 2".
+fn display_name(name: Option<&str>, index: usize) -> String {
+    const DEVICE_PREFIX: &str = "\\\\.\\DISPLAY";
+
+    if let Some(n) = name.filter(|n| !n.is_empty()) {
+        if let Some(number) = n.strip_prefix(DEVICE_PREFIX) {
+            if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) {
+                return format!("Display {number}");
+            }
+        }
+        return n.to_string();
+    }
+    format!("Display {}", index + 1)
 }
 
 #[tauri::command]

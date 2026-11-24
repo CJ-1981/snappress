@@ -27,7 +27,7 @@ fn clamp_rect(
 }
 
 #[tauri::command]
-pub fn start_recording(
+pub async fn start_recording(
     app: AppHandle,
     display_id: Option<u32>,
     x: i32,
@@ -35,15 +35,35 @@ pub fn start_recording(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    crate::commands::overlay::close_overlay(&app);
-    crate::commands::overlay::show_main(&app);
+    // Resolving the display talks to the main thread, so this cannot run there.
+    tauri::async_runtime::spawn_blocking(move || {
+        let started = start_recording_session(&app, display_id, x, y, width, height);
+        if let Err(e) = &started {
+            crate::commands::overlay::fail_capture(&app, e);
+        }
+        started
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn start_recording_session(
+    app: &AppHandle,
+    display_id: Option<u32>,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    crate::commands::overlay::close_overlay(app);
+    crate::commands::overlay::show_main(app);
 
     if app.state::<AppState>().recording.lock().unwrap().is_some() {
         return Err("A recording is already in progress".into());
     }
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
-    let monitor = crate::commands::overlay::pick_tauri_monitor(&app, display_id)?;
-    let sid = capture::resolve_scap_display_id(&app, display_id)?;
+    let monitor = crate::commands::overlay::pick_tauri_monitor(app, display_id)?;
+    let sid = capture::resolve_scap_display_id(app, display_id)?;
     let (rx, ry, rw, rh) = clamp_rect(
         x,
         y,

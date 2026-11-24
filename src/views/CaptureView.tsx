@@ -7,6 +7,7 @@ import {
   Maximize,
   Monitor,
   Video,
+  X,
 } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../lib/api';
@@ -19,6 +20,9 @@ interface Props {
   items: CaptureItem[];
   ffmpegReady: boolean | null;
   onOpenEditor: (item: CaptureItem) => void;
+  /** Last failure reported by the backend, until dismissed. */
+  captureError: string | null;
+  onDismissCaptureError: () => void;
 }
 
 export default function CaptureView({
@@ -28,6 +32,8 @@ export default function CaptureView({
   items,
   ffmpegReady,
   onOpenEditor,
+  captureError,
+  onDismissCaptureError,
 }: Props) {
   const [error, setError] = useState<string | null>(null);
 
@@ -72,12 +78,22 @@ export default function CaptureView({
         </div>
       )}
 
-      {error && (
+      {(error || captureError) && (
         <div
           role="alert"
-          className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+          className="mb-6 flex items-start justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
         >
-          {error}
+          <p className="min-w-0 break-words">{error ?? captureError}</p>
+          <button
+            onClick={() => {
+              setError(null);
+              onDismissCaptureError();
+            }}
+            aria-label="Dismiss error"
+            className="shrink-0 rounded p-1 text-red-300/70 transition hover:bg-red-500/10 hover:text-red-200"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
       )}
 

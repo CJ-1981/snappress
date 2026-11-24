@@ -1,0 +1,40 @@
+name: Windows capture test
+
+# Runs the capture unit tests on a real Windows session: display enumeration,
+# the Windows.Graphics.Capture session lifecycle and the GDI fallback.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/windows-capture-test]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          prefix-key: rust-test-x86_64-pc-windows-msvc
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # tauri-build embeds the frontend, so it has to exist before cargo runs.
+      - name: Build frontend
+        run: npm run ui:build
+
+      - name: Run capture tests
+        working-directory: src-tauri
+        run: cargo test --lib -- --nocapture --test-threads=1
