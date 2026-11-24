@@ -8,7 +8,7 @@ use std::ffi::c_void;
 use std::ptr::null_mut;
 
 use image::RgbaImage;
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, w};
 use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, BitBlt, CreateCompatibleDC, CreateDCW,
@@ -201,13 +201,18 @@ impl GdiDisplay {
     }
 
     /// A DC that spans exactly this monitor, when Windows will make one.
+    ///
+    /// The device name is accepted in different argument positions depending
+    /// on the Windows version, so each documented form is tried; a DC counts
+    /// only when it has exactly the monitor's pixel size.
     fn monitor_dc(info: &MONITORINFOEXW, width: i32, height: i32) -> Option<Source> {
         let device = PCWSTR::from_raw(info.szDevice.as_ptr());
         let empty = PCWSTR::null();
+        let driver = w!("DISPLAY");
         // SAFETY: the device string belongs to a monitor Windows just
         // described, and every DC that is rejected is deleted again.
         unsafe {
-            for (driver, name) in [(device, empty), (empty, device)] {
+            for (driver, name) in [(device, empty), (empty, device), (driver, device)] {
                 let dc = CreateDCW(driver, name, empty, None);
                 if dc.is_invalid() {
                     continue;

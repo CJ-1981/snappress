@@ -439,18 +439,44 @@ pub fn crop_rgba(img: &RgbaImage, x: i32, y: i32, w: u32, h: u32) -> Result<Rgba
     Ok(image::imageops::crop_imm(img, x0 as u32, y0 as u32, cw, ch).to_image())
 }
 
-/// Exercises the real capture APIs. They need a desktop session, so they are
-/// only meaningful on a machine with a screen; `--nocapture` prints what each
-/// path did.
+/// Exercises the real capture APIs on a Windows desktop session. They print
+/// what each path did, and append it to the file named by
+/// `SNAPPRESS_TEST_REPORT` when a workflow sets one.
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
     use super::*;
+    use std::time::Instant;
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, MB_OK, MessageBoxW, PostMessageW, WM_CLOSE,
+    };
+    use windows::core::{PCWSTR, w};
+
+    /// Print `line`, and append it to the report file when a workflow set one.
+    fn report(line: impl std::fmt::Display) {
+        let line = line.to_string();
+        eprintln!("{line}");
+        if let Ok(path) = std::env::var("SNAPPRESS_TEST_REPORT") {
+            use std::io::Write;
+            let file = std::fs::OpenOptions::new().create(true).append(true).open(path);
+            if let Ok(mut file) = file {
+                let _ = writeln!(file, "{line}");
+            }
+        }
+    }
 
     fn display_ids() -> Vec<u32> {
+        report(format!(
+            "capture API available: {}",
+            scap::is_supported()
+        ));
         let ids: Vec<u32> = display_targets()
             .into_iter()
             .filter_map(|t| match t {
-                Target::Display(d) => Some(d.id),
+                Target::Display(d) => {
+                    report(format!("display id {} = \"{}\"", d.id, d.title));
+                    Some(d.id)
+                }
                 _ => None,
             })
             .collect();
@@ -458,12 +484,48 @@ mod windows_tests {
         ids
     }
 
+    /// Show a message box for a moment. It changes the screen, so every live
+    /// capture session delivers a frame.
+    fn change_screen() {
+        const TITLE: PCWSTR = w!("SnapPress capture test");
+        std::thread::spawn(|| {
+            // SAFETY: plain message box on a desktop session.
+            unsafe {
+                MessageBoxW(
+                    HWND::default(),
+                    w!("A capture test is changing the screen."),
+                    TITLE,
+                    MB_OK,
+                );
+            }
+        });
+        std::thread::sleep(Duration::from_millis(1500));
+        // SAFETY: posts a close to the message box created above, if any.
+        unsafe {
+            if let Ok(window) = FindWindowW(PCWSTR::null(), TITLE) {
+                if !window.is_invalid() {
+                    let _ = PostMessageW(window, WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
     #[test]
     fn gdi_grabs_every_display() {
         for id in display_ids() {
             let display = gdi::GdiDisplay::open(id).unwrap_or_else(|e| panic!("GDI open {id}: {e}"));
             let image = display.grab().unwrap_or_else(|e| panic!("GDI grab {id}: {e}"));
-            eprintln!("GDI display {id}: {}x{}", image.width(), image.height());
+            let painted = image
+                .pixels()
+                .filter(|p| p.0[0] > 0 || p.0[1] > 0 || p.0[2] > 0)
+                .count();
+            report(format!(
+                "GDI display {id}: {}x{}, {} non-black pixels",
+                image.width(),
+                image.height(),
+                painted
+            ));
             assert!(image.width() > 0 && image.height() > 0, "empty frame for {id}");
             assert!(image.pixels().all(|p| p.0[3] == 255), "frame must be opaque");
         }
@@ -472,37 +534,73 @@ mod windows_tests {
     #[test]
     fn grabber_starts_and_stops_cleanly_on_every_display() {
         for id in display_ids() {
+            let started = Instant::now();
             let (mut grabber, first) =
                 DisplayGrabber::start(id, 30).unwrap_or_else(|e| panic!("start {id}: {e}"));
-            eprintln!(
-                "grabber display {id}: {} via {}",
-                format_args!("{}x{}", first.width(), first.height()),
-                grabber.backend_name()
-            );
+            report(format!(
+                "grabber display {id}: {}x{} via {} in {} ms",
+                first.width(),
+                first.height(),
+                grabber.backend_name(),
+                started.elapsed().as_millis()
+            ));
             assert!(first.width() > 0 && first.height() > 0, "empty frame for {id}");
             let _ = grabber
                 .grab(Duration::from_millis(500))
                 .unwrap_or_else(|e| panic!("grab {id}: {e}"));
             drop(grabber);
         }
-        // Dropping a grabber used to leave its capture thread running against
-        // a dead receiver; the next frame then aborted the process. Reaching
-        // the end of this test means it did not.
         std::thread::sleep(Duration::from_secs(1));
     }
 
     #[test]
     fn capture_sessions_report_why_they_fail() {
         for id in display_ids() {
+            let started = Instant::now();
             match create_display_capturer(id, 30) {
                 Ok(capturer) => {
+                    report(format!(
+                        "Windows.Graphics.Capture display {id}: started in {} ms",
+                        started.elapsed().as_millis()
+                    ));
                     let frame = capturer.get_next_frame_with_timeout(Duration::from_secs(3));
-                    eprintln!("Windows.Graphics.Capture display {id}: started, first frame {frame:?}");
+                    report(format!(
+                        "Windows.Graphics.Capture display {id}: first frame {frame:?}"
+                    ));
                     drop(capturer);
                 }
-                Err(e) => eprintln!("Windows.Graphics.Capture display {id}: {e}"),
+                Err(e) => report(format!(
+                    "Windows.Graphics.Capture display {id}: no session after {} ms: {e}",
+                    started.elapsed().as_millis()
+                )),
             }
         }
         std::thread::sleep(Duration::from_secs(1));
+    }
+
+    /// Upstream left the capture session running when the capturer was
+    /// dropped; the next frame then hit `tx.send(..).expect(..)` inside the
+    /// WinRT callback and aborted the process. Reaching the end of this test
+    /// with a live session means that no longer happens.
+    #[test]
+    fn dropping_a_live_session_does_not_abort_the_process() {
+        for id in display_ids() {
+            let Ok(capturer) = create_display_capturer(id, 30) else {
+                report(format!("display {id}: no session, nothing to drop"));
+                continue;
+            };
+            let frame = capturer.get_next_frame_with_timeout(Duration::from_secs(3));
+            drop(capturer);
+            std::thread::sleep(Duration::from_millis(300));
+            change_screen();
+            std::thread::sleep(Duration::from_secs(1));
+            report(format!(
+                "display {id}: alive after a dropped session ({}) and a screen change",
+                match &frame {
+                    Ok(_) => "it was delivering frames",
+                    Err(_) => "it never delivered a frame",
+                }
+            ));
+        }
     }
 }

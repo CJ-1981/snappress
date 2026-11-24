@@ -43,6 +43,10 @@ windows-capture = "=1.5.0"
 # GDI fallback capture + diagnostics (same version scap uses).
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Graphics_Gdi"] }
 
+# Capture tests change the screen to prove sessions end cleanly.
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging"] }
+
 # Vendored scap: crates.io 0.0.8 plus a Windows-engine fix for
 # windows-capture 1.5.0 (see vendor/scap/VENDORED.md).
 [patch.crates-io]

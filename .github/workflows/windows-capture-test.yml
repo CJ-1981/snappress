@@ -37,4 +37,32 @@ jobs:
 
       - name: Run capture tests
         working-directory: src-tauri
-        run: cargo test --lib -- --nocapture --test-threads=1
+        env:
+          SNAPPRESS_TEST_REPORT: ${{ runner.temp }}/capture-test-report.txt
+        run: |
+          # cmd does the redirection: PowerShell turns native stderr into
+          # error records, which its stop-on-error default would fail on.
+          cmd /c 'cargo test --lib -- --nocapture --test-threads=1 > "%RUNNER_TEMP%\capture-test-output.txt" 2>&1'
+          "cargo test exit code: $LASTEXITCODE"
+          exit $LASTEXITCODE
+
+      # Printed in a step of its own: the runner once dropped everything a
+      # finished test binary wrote after its first line.
+      - name: Show test output
+        if: always()
+        run: |
+          "--- cargo test output ---"
+          Get-Content "${env:RUNNER_TEMP}\capture-test-output.txt" -ErrorAction SilentlyContinue
+          "--- report ---"
+          Get-Content "${env:RUNNER_TEMP}\capture-test-report.txt" -ErrorAction SilentlyContinue
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-capture-test
+          path: |
+            ${{ runner.temp }}/capture-test-output.txt
+            ${{ runner.temp }}/capture-test-report.txt
+          if-no-files-found: warn
+          retention-days: 14
