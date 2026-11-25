@@ -43,15 +43,20 @@ fn describe_environment(app: &AppHandle) -> String {
         };
         match map.monitor_of(display.id) {
             Some(monitor) => {
+                let name = monitor.name().map(String::as_str).unwrap_or("(unnamed)");
+                let position = monitor.position();
+                let size = monitor.size();
                 let _ = writeln!(
                     out,
-                    "  display {} (id {}): \"{}\" shown on {:?} at {:?}, size {:?}, scale {}",
+                    "  display {} (id {}): \"{}\" shown on \"{}\" at {},{}, {}x{}, scale {}",
                     i + 1,
                     display.id,
                     display.title,
-                    monitor.name(),
-                    monitor.position(),
-                    monitor.size(),
+                    name,
+                    position.x,
+                    position.y,
+                    size.width,
+                    size.height,
                     monitor.scale_factor()
                 );
             }

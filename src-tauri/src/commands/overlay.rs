@@ -180,11 +180,14 @@ impl Drop for OverlayOpening<'_> {
 
 fn build_overlay_window(app: &AppHandle, display_id: Option<u32>) -> Result<(), String> {
     let monitor = pick_tauri_monitor(app, display_id)?;
+    let (position, size) = (monitor.position(), monitor.size());
     log::info!(
-        "overlay on monitor {:?} at {:?}, {:?}, scale {}",
+        "overlay on monitor {:?} at {},{}, {}x{}, scale {}",
         monitor.name(),
-        monitor.position(),
-        monitor.size(),
+        position.x,
+        position.y,
+        size.width,
+        size.height,
         monitor.scale_factor()
     );
     let win = WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))

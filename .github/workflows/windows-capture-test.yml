@@ -1,7 +1,10 @@
 name: Windows capture test
 
-# Runs the capture unit tests on a real Windows session: display enumeration,
-# the Windows.Graphics.Capture session lifecycle and the GDI fallback.
+# Checks screen capture on a real Windows desktop:
+#  - unit tests: display enumeration, the Windows.Graphics.Capture session
+#    lifecycle and the GDI fallback
+#  - the real app, driven once through its capture flow by a test-only script
+#    injected into the frontend build
 on:
   workflow_dispatch:
   push:
@@ -64,5 +67,171 @@ jobs:
           path: |
             ${{ runner.temp }}/capture-test-output.txt
             ${{ runner.temp }}/capture-test-report.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  app:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          prefix-key: rust-app-x86_64-pc-windows-msvc
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run ui:build
+
+      # The probe opens and cancels the region overlay, then takes a
+      # full-screen and a region capture. The app log, the saved captures
+      # and the window state afterwards tell whether the flow works.
+      - name: Build the app with a startup probe
+        run: |
+          $probe = @'
+          <script>
+          /* __PROBE__ — test only. Drives the real app once through its
+             capture flow. Injected by the "Windows capture test" workflow
+             into this build; never part of a release. */
+          (function () {
+            function invoke(cmd, args) {
+              return window.__TAURI_INTERNALS__.invoke(cmd, args);
+            }
+            function sleep(ms) {
+              return new Promise(function (resolve) { setTimeout(resolve, ms); });
+            }
+            function waitForTauri() {
+              return new Promise(function (resolve, reject) {
+                var started = Date.now();
+                (function poll() {
+                  if (window.__TAURI_INTERNALS__) return resolve();
+                  if (Date.now() - started > 30000) return reject(new Error('no Tauri IPC'));
+                  setTimeout(poll, 200);
+                })();
+              });
+            }
+            waitForTauri()
+              .then(function () { return sleep(3000); })
+              .then(function () { return invoke('start_region_capture', { mode: 'image', displayId: null }); })
+              .then(function () { return sleep(2500); })
+              .then(function () { return invoke('cancel_capture'); })
+              .then(function () { return sleep(1500); })
+              .then(function () { return invoke('capture_full_screen', { displayId: null }); })
+              .then(function () { return sleep(1500); })
+              .then(function () {
+                return invoke('capture_region', { displayId: null, x: 100, y: 100, width: 320, height: 240 });
+              })
+              .catch(function () { /* the app log carries the reason */ });
+          })();
+          </script>
+          '@
+          $index = (Resolve-Path "dist/index.html").Path
+          $html = [System.IO.File]::ReadAllText($index)
+          [System.IO.File]::WriteAllText($index, $html.Replace('</body>', "$probe</body>"))
+          if (-not (Select-String -Path $index -SimpleMatch "__PROBE__" -Quiet)) {
+            throw "the probe was not injected"
+          }
+          # An empty beforeBuildCommand keeps the CLI from rebuilding (and so
+          # overwriting) the frontend that now contains the probe.
+          npx tauri build --debug --no-bundle --config '{"build":{"beforeBuildCommand":""}}'
+          if ($LASTEXITCODE -ne 0) {
+            "--- tauri build failed; building with cargo directly ---"
+            Push-Location src-tauri
+            cargo build --features tauri/custom-protocol
+            Pop-Location
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Run the app once with the probe
+        run: |
+          $exe = (Resolve-Path "src-tauri/target/debug/snappress.exe").Path
+          Start-Process -FilePath $exe
+          Start-Sleep -Seconds 35
+
+          $failures = @()
+          $app = Get-Process snappress -ErrorAction SilentlyContinue
+          if (-not $app) {
+            $failures += "the app is no longer running"
+          } else {
+            "main window visible afterwards: $($app.MainWindowHandle -ne 0)"
+            if ($app.MainWindowHandle -eq 0) { $failures += "the main window is hidden" }
+            Stop-Process -Name snappress -Force
+          }
+
+          $data = Join-Path $env:APPDATA "app.snappress.desktop"
+          $log = Join-Path $env:LOCALAPPDATA "app.snappress.desktop\logs\snappress.log"
+          if (-not (Test-Path $log)) {
+            $failures += "the app wrote no log file"
+          } else {
+            $lines = Get-Content $log
+            if (-not ($lines | Select-String -SimpleMatch "overlay on monitor")) {
+              $failures += "the overlay window was never created"
+            }
+            $failed = $lines | Select-String -SimpleMatch "capture failed"
+            if ($failed) { $failures += ($failed | ForEach-Object { $_.Line }) }
+          }
+
+          Add-Type -AssemblyName System.Drawing
+          $captures = @(Get-ChildItem (Join-Path $data "captures") -Filter *.png -ErrorAction SilentlyContinue)
+          $sizes = @($captures | ForEach-Object {
+            $img = [System.Drawing.Image]::FromFile($_.FullName)
+            $size = "$($img.Width)x$($img.Height)"
+            $img.Dispose()
+            $size
+          })
+          "captures: $($sizes -join ', ')"
+          if (-not ($sizes | Select-String -SimpleMatch "320x240")) {
+            $failures += "the region capture was not saved as 320x240"
+          }
+          if (-not ($sizes | Where-Object { $_ -ne "320x240" })) {
+            $failures += "the full-screen capture was not saved"
+          }
+
+          if ($failures.Count -gt 0) {
+            $failures | ForEach-Object { "PROBE FAILED: $_" }
+            exit 1
+          }
+          "probe passed"
+
+      - name: Show app results
+        if: always()
+        run: |
+          "--- app log ---"
+          Get-Content (Join-Path $env:LOCALAPPDATA "app.snappress.desktop\logs\snappress.log") -ErrorAction SilentlyContinue
+          "--- library index ---"
+          Get-Content (Join-Path $env:APPDATA "app.snappress.desktop\index.json") -ErrorAction SilentlyContinue
+
+      - name: Collect app results
+        if: always()
+        run: |
+          # The artifact upload cannot see the runner's own environment
+          # variables, so gather the files under a known path first.
+          $out = Join-Path $env:RUNNER_TEMP "app-results"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item (Join-Path $env:LOCALAPPDATA "app.snappress.desktop\logs\*.log") $out -ErrorAction SilentlyContinue
+          Copy-Item (Join-Path $env:APPDATA "app.snappress.desktop\captures\*.png") $out -ErrorAction SilentlyContinue
+          Copy-Item (Join-Path $env:APPDATA "app.snappress.desktop\index.json") $out -ErrorAction SilentlyContinue
+          Get-ChildItem $out | Select-Object Name, Length | Format-Table -AutoSize | Out-String
+
+      - name: Upload app results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-capture-app
+          path: ${{ runner.temp }}/app-results
           if-no-files-found: warn
           retention-days: 14

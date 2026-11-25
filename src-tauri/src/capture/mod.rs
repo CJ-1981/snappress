@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use image::RgbaImage;
 use scap::capturer::{Capturer, CaptureError};
@@ -337,9 +337,16 @@ impl DisplayGrabber {
     }
 
     fn start_scap(display_id: u32, fps: u32) -> Result<(Capturer, RgbaImage), String> {
+        let started = Instant::now();
         let capturer = create_display_capturer(display_id, fps)?;
         match next_image(&capturer, FIRST_FRAME_TIMEOUT) {
-            Ok(Some(first)) => Ok((capturer, first)),
+            Ok(Some(first)) => {
+                log::info!(
+                    "first frame from display {display_id} after {} ms",
+                    started.elapsed().as_millis()
+                );
+                Ok((capturer, first))
+            }
             Ok(None) => Err(describe(&CaptureError::Timeout)),
             Err(e) => Err(e),
         }
@@ -347,11 +354,13 @@ impl DisplayGrabber {
 
     #[cfg(target_os = "windows")]
     fn start_gdi(display_id: u32, scap_error: String) -> Result<(Self, RgbaImage), String> {
+        let started = Instant::now();
         log::warn!("grabbing display {display_id} through GDI instead: {scap_error}");
         crate::state::record_gdi_fallback(&scap_error);
         let display = gdi::GdiDisplay::open(display_id)
             .map_err(|e| format!("{scap_error} The GDI fallback failed too: {e}"))?;
         let first = display.grab()?;
+        log::info!("grabbing display {display_id} through GDI: first frame after {} ms", started.elapsed().as_millis());
         Ok((
             Self {
                 backend: Backend::Gdi(display),
