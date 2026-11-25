@@ -94,6 +94,14 @@ npm run tauri build   # production bundles (dmg/app on macOS, msi/nsis on Window
 The UI can also be built standalone (`npm run ui:build`) for typechecking and
 Vite output; the Tauri CLI wires it into the desktop app.
 
+To check capture on Windows without a Windows machine, run the **Windows
+capture test** workflow from the Actions tab: it runs the capture unit tests
+on a Windows desktop and drives the real app through a region overlay and two
+captures. For a quick compile check of the Windows target on macOS, install
+LLVM (`brew install llvm`) and run
+`RC=$(brew --prefix llvm)/bin/llvm-rc cargo check --target x86_64-pc-windows-msvc`
+in `src-tauri`.
+
 ## Global hotkeys
 
 | Action | Windows | macOS |
@@ -115,8 +123,9 @@ CSS pixels, converts to physical pixels with `devicePixelRatio`, and invokes
 `capture_region`. The backend closes the overlay, grabs a full frame and
 crops the saved PNG. The frame comes from Windows.Graphics.Capture on Windows
 and ScreenCaptureKit on macOS; when the former cannot run, the capture is
-retried through GDI. Capture sessions are stopped as soon as they are dropped,
-and every wait is bounded, so a capture ends in an image or a visible error.
+retried through GDI. Capture sessions are stopped when the capturer is
+dropped, and every wait for a frame is bounded, so a capture ends in an image
+or a visible error.
 
 ### Scrolling capture
 `run_scroll_session` (in `src-tauri/src/capture/stitch.rs`) moves the cursor
@@ -156,9 +165,9 @@ Stored in the app data directory as `settings.json` (library index:
 
 ## Known limitations (v1)
 
-- On macOS, displays are paired with monitors by enumeration order when their
-  names are not unique, so two identical monitors may be swapped. Windows
-  pairs them by device name, which is exact.
+- On macOS, displays are matched to monitors by enumeration order, so with
+  several monitors the name and size in the display list can belong to
+  another monitor. Windows matches them by device name, which is exact.
 - On Windows, captures taken through the GDI fallback never include the
   mouse cursor.
 - Fixed headers/sidebars inside scrollable pages can produce ghosting in
@@ -169,18 +178,18 @@ Stored in the app data directory as `settings.json` (library index:
 ## Troubleshooting
 
 - **A capture fails** - the main window comes back and shows the reason in a
-  red banner on the Capture tab (and as a toast). Captures cannot leave the
-  app hidden: a watchdog brings the window back after 30 seconds whatever
-  went wrong.
+  red banner on the Capture tab (and as a toast). A capture that never
+  returns cannot leave the app hidden either: the window is brought back
+  after 30 seconds.
 - **Black frames or "capture failed" on macOS** - grant Screen Recording;
   the app shows a banner with a shortcut to the right System Settings pane
   and refreshes once the permission is granted. A restart may still be
   required for a running capture to pick it up.
-- **"capture session failed to start" on Windows** - Windows.Graphics.Capture
-  is unavailable on that machine (common in remote desktop and VM sessions,
-  or with some GPU drivers). Region, full-screen and scrolling captures fall
-  back to plain GDI automatically; screen recording needs
-  Windows.Graphics.Capture and does not.
+- **Screen recording fails with "capture session failed to start" on
+  Windows** - Windows.Graphics.Capture is unavailable on that machine (common
+  in remote desktop and VM sessions, or with some GPU drivers). Region,
+  full-screen and scrolling captures switch to plain GDI automatically in
+  that case; screen recording needs Windows.Graphics.Capture.
 - **Reporting a capture problem** - open Settings → Troubleshooting →
   **Copy diagnostics** and paste the result. It lists every display with the
   monitor that shows it, whether the capture API is available, any fallback
