@@ -139,26 +139,34 @@ struct Pairing {
 /// which pairs them exactly — unless a name is missing or shared by two
 /// monitors, in which case index order is all there is.
 fn pair(displays: &[Target], monitors: &[tauri::Monitor]) -> Pairing {
-    let by_name = unique_names(displays, monitors).then(|| {
-        displays
+    let titles: Vec<&str> = displays
+        .iter()
+        .map(|t| match t {
+            Target::Display(d) => d.title.as_str(),
+            _ => "",
+        })
+        .collect();
+    let names: Vec<Option<&str>> = monitors.iter().map(|m| m.name().map(String::as_str)).collect();
+    pairing(&titles, &names)
+}
+
+/// The pairing itself, on plain names: `None` is an unnamed monitor.
+fn pairing(display_titles: &[&str], monitor_names: &[Option<&str>]) -> Pairing {
+    let by_name = unambiguous_names(display_titles, monitor_names).then(|| {
+        display_titles
             .iter()
-            .map(|t| match t {
-                Target::Display(d) => monitors
-                    .iter()
-                    .position(|m| m.name().map(String::as_str) == Some(d.title.as_str())),
-                _ => None,
-            })
+            .map(|title| monitor_names.iter().position(|name| name == &Some(*title)))
             .collect::<Vec<_>>()
     });
-    let monitor_of_display: Vec<Option<usize>> = (0..displays.len())
+    let monitor_of_display: Vec<Option<usize>> = (0..display_titles.len())
         .map(|i| {
             by_name
                 .as_ref()
                 .and_then(|p| p[i])
-                .or_else(|| (i < monitors.len()).then_some(i))
+                .or_else(|| (i < monitor_names.len()).then_some(i))
         })
         .collect();
-    let display_of_monitor = (0..monitors.len())
+    let display_of_monitor = (0..monitor_names.len())
         .map(|m| monitor_of_display.iter().position(|paired| *paired == Some(m)))
         .collect();
     Pairing {
@@ -167,17 +175,10 @@ fn pair(displays: &[Target], monitors: &[tauri::Monitor]) -> Pairing {
     }
 }
 
-/// True when every monitor and display has a name and no name is repeated.
-fn unique_names(displays: &[Target], monitors: &[tauri::Monitor]) -> bool {
-    let names: Vec<&str> = monitors.iter().filter_map(|m| m.name()).map(String::as_str).collect();
-    let titles: Vec<&str> = displays
-        .iter()
-        .filter_map(|t| match t {
-            Target::Display(d) => Some(d.title.as_str()),
-            _ => None,
-        })
-        .collect();
-    names.len() == monitors.len() && unique(&names) && unique(&titles)
+/// True when every monitor is named and no name or title is repeated.
+fn unambiguous_names(display_titles: &[&str], monitor_names: &[Option<&str>]) -> bool {
+    let names: Vec<&str> = monitor_names.iter().flatten().copied().collect();
+    names.len() == monitor_names.len() && unique(&names) && unique(display_titles)
 }
 
 fn unique(items: &[&str]) -> bool {
@@ -484,6 +485,14 @@ mod windows_tests {
         ids
     }
 
+    /// A frame's shape and size; its pixels are megabytes and say nothing.
+    fn frame_summary(frame: &Frame) -> String {
+        match frame {
+            Frame::BGRA(f) => format!("{}x{} BGRA, {} bytes", f.width, f.height, f.data.len()),
+            _ => "a non-BGRA frame".to_string(),
+        }
+    }
+
     /// Show a message box for a moment. It changes the screen, so every live
     /// capture session delivers a frame.
     fn change_screen() {
@@ -521,10 +530,11 @@ mod windows_tests {
                 .filter(|p| p.0[0] > 0 || p.0[1] > 0 || p.0[2] > 0)
                 .count();
             report(format!(
-                "GDI display {id}: {}x{}, {} non-black pixels",
+                "GDI display {id}: {}x{}, {} non-black pixels, from {}",
                 image.width(),
                 image.height(),
-                painted
+                painted,
+                display.provenance()
             ));
             assert!(image.width() > 0 && image.height() > 0, "empty frame for {id}");
             assert!(image.pixels().all(|p| p.0[3] == 255), "frame must be opaque");
@@ -565,7 +575,8 @@ mod windows_tests {
                     ));
                     let frame = capturer.get_next_frame_with_timeout(Duration::from_secs(3));
                     report(format!(
-                        "Windows.Graphics.Capture display {id}: first frame {frame:?}"
+                        "Windows.Graphics.Capture display {id}: first frame {}",
+                        frame.as_ref().map(frame_summary).unwrap_or_else(|e| e.to_string())
                     ));
                     drop(capturer);
                 }
@@ -602,5 +613,59 @@ mod windows_tests {
                 }
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod pairing_tests {
+    use super::pairing;
+
+    /// Monitor index for each display.
+    fn monitors_of(titles: &[&str], names: &[Option<&str>]) -> Vec<Option<usize>> {
+        pairing(titles, names).monitor_of_display
+    }
+
+    #[test]
+    fn matches_by_name_whatever_the_enumeration_order() {
+        // Two Windows monitors: both sides report the device name, but not
+        // necessarily in the same order.
+        assert_eq!(
+            monitors_of(
+                &[r"\\.\DISPLAY2", r"\\.\DISPLAY1"],
+                &[Some(r"\\.\DISPLAY1"), Some(r"\\.\DISPLAY2")]
+            ),
+            vec![Some(1), Some(0)]
+        );
+    }
+
+    #[test]
+    fn inverse_pairing_agrees() {
+        // Monitors are listed Z, X, Y; displays X, Y, Z.
+        let pairs = pairing(&["X", "Y", "Z"], &[Some("Z"), Some("X"), Some("Y")]);
+        assert_eq!(pairs.monitor_of_display, vec![Some(1), Some(2), Some(0)]);
+        assert_eq!(pairs.display_of_monitor, vec![Some(2), Some(0), Some(1)]);
+    }
+
+    #[test]
+    fn falls_back_to_order_for_repeated_names() {
+        // Two identical monitors all report the same model name.
+        assert_eq!(
+            monitors_of(&["A", "A"], &[Some("A"), Some("A")]),
+            vec![Some(0), Some(1)]
+        );
+    }
+
+    #[test]
+    fn falls_back_to_order_for_unnamed_monitors() {
+        assert_eq!(
+            monitors_of(&["A", "B"], &[None, Some("B")]),
+            vec![Some(0), Some(1)]
+        );
+    }
+
+    #[test]
+    fn leaves_displays_without_a_monitor_unpaired() {
+        assert_eq!(monitors_of(&["A", "B"], &[Some("A")]), vec![Some(0), None]);
+        assert_eq!(pairing(&["A", "B"], &[Some("A")]).display_of_monitor, vec![Some(0)]);
     }
 }

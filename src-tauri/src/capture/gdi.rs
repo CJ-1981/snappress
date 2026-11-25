@@ -30,6 +30,9 @@ pub struct GdiDisplay {
     bits: *mut c_void,
     width: i32,
     height: i32,
+    /// How `source` was obtained, for the capture tests' report.
+    #[cfg(test)]
+    provenance: &'static str,
 }
 
 enum Source {
@@ -132,16 +135,23 @@ impl GdiDisplay {
             return Err("the monitor reports no usable size".into());
         }
 
-        let source = Self::monitor_dc(&info, width, height).unwrap_or_else(|| {
-            // No DC for the monitor alone: read it out of the whole virtual
-            // screen, where it starts at its monitor rectangle.
-            let dc = GetDC(HWND::default());
-            Source::Desktop {
-                dc,
-                x: rect.left,
-                y: rect.top,
+        #[cfg_attr(not(test), allow(unused_variables))]
+        let (source, provenance) = match Self::monitor_dc(&info, width, height) {
+            Some(found) => found,
+            None => {
+                // No DC for the monitor alone: read it out of the whole
+                // virtual screen, where it starts at its monitor rectangle.
+                let dc = GetDC(HWND::default());
+                (
+                    Source::Desktop {
+                        dc,
+                        x: rect.left,
+                        y: rect.top,
+                    },
+                    "the virtual screen",
+                )
             }
-        });
+        };
         let dc = source.dc();
         if dc.is_invalid() {
             return Err("could not get a device context for the screen".into());
@@ -197,7 +207,14 @@ impl GdiDisplay {
             bits,
             width,
             height,
+            #[cfg(test)]
+            provenance,
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn provenance(&self) -> &'static str {
+        self.provenance
     }
 
     /// A DC that spans exactly this monitor, when Windows will make one.
@@ -205,14 +222,18 @@ impl GdiDisplay {
     /// The device name is accepted in different argument positions depending
     /// on the Windows version, so each documented form is tried; a DC counts
     /// only when it has exactly the monitor's pixel size.
-    fn monitor_dc(info: &MONITORINFOEXW, width: i32, height: i32) -> Option<Source> {
+    fn monitor_dc(info: &MONITORINFOEXW, width: i32, height: i32) -> Option<(Source, &'static str)> {
         let device = PCWSTR::from_raw(info.szDevice.as_ptr());
         let empty = PCWSTR::null();
-        let driver = w!("DISPLAY");
+        let forms = [
+            ((device, empty), "a monitor DC (device as driver)"),
+            ((empty, device), "a monitor DC (device as device)"),
+            ((w!("DISPLAY"), device), "a monitor DC (DISPLAY driver and device)"),
+        ];
         // SAFETY: the device string belongs to a monitor Windows just
         // described, and every DC that is rejected is deleted again.
         unsafe {
-            for (driver, name) in [(device, empty), (empty, device), (driver, device)] {
+            for ((driver, name), provenance) in forms {
                 let dc = CreateDCW(driver, name, empty, None);
                 if dc.is_invalid() {
                     continue;
@@ -220,7 +241,7 @@ impl GdiDisplay {
                 let matches = (GetDeviceCaps(dc, DESKTOPHORZRES), GetDeviceCaps(dc, DESKTOPVERTRES))
                     == (width, height);
                 if matches {
-                    return Some(Source::Monitor(dc));
+                    return Some((Source::Monitor(dc), provenance));
                 }
                 let _ = DeleteDC(dc);
             }

@@ -73,10 +73,10 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
       onClick={onClose}
     >
       <div
-        className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl"
+        className="flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center justify-between px-6 pb-4 pt-5">
           <h2 className="text-base font-semibold">Settings</h2>
           <button
             onClick={onClose}
@@ -87,7 +87,9 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
           </button>
         </div>
 
-        <div className="space-y-4 text-sm">
+        {/* Only this part scrolls, so the actions stay on screen. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6">
+          <div className="space-y-4 text-sm">
           <Field label="Recording FPS">
             <select
               value={draft.recordingFps}
@@ -212,9 +214,10 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
               </p>
             )}
           </div>
+          </div>
         </div>
 
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="flex justify-end gap-2 border-t border-zinc-800 px-6 py-4">
           <button
             onClick={onClose}
             className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition hover:border-zinc-500"
