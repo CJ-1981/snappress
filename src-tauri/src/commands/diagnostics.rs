@@ -77,6 +77,14 @@ fn describe_environment(app: &AppHandle) -> String {
             "the last capture used the GDI fallback because: {reason}"
         );
     }
+    let state = app.state::<crate::state::AppState>();
+    let hotkeys = state.registered_hotkeys.lock().unwrap();
+    if hotkeys.is_empty() {
+        let _ = writeln!(out, "global shortcuts: none registered");
+    } else {
+        let shown: Vec<String> = hotkeys.iter().map(|(a, s)| format!("{a}={s}")).collect();
+        let _ = writeln!(out, "global shortcuts: {}", shown.join(", "));
+    }
     out
 }
 

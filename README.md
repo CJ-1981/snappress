@@ -104,15 +104,20 @@ in `src-tauri`.
 
 ## Global hotkeys
 
-| Action | Windows | macOS |
+Defaults, configurable in Settings → Keyboard shortcuts (empty disables one;
+shortcuts are inactive while the settings dialog is open so a press reaches
+the capture field):
+
+| Action | Windows default | macOS default |
 | --- | --- | --- |
 | Region capture | `PrintScreen` | `Cmd+Shift+6` |
 | Scrolling capture | `Ctrl+Alt+S` | `Cmd+Alt+S` |
 | Record screen | `Ctrl+Alt+V` | `Cmd+Alt+V` |
 | Stop recording | `Ctrl+Alt+X` | `Cmd+Alt+X` |
 
-Hotkey registration failures (for example a conflicting macOS binding) are
-logged to the console and do not prevent startup.
+If a shortcut cannot be registered (for example the OS or another app owns
+the combination), the app falls back to the default for that action and says
+so when settings are saved.
 
 ## How the pieces work
 

@@ -1,6 +1,7 @@
 mod capture;
 mod commands;
 mod encode;
+mod hotkeys;
 mod input;
 mod library;
 mod settings;
@@ -12,48 +13,6 @@ use state::AppState;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WindowEvent};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-
-fn hotkeys() -> [(&'static str, &'static str); 4] {
-    #[cfg(target_os = "macos")]
-    {
-        [
-            ("Cmd+Shift+6", "image"),
-            ("Cmd+Alt+S", "scroll"),
-            ("Cmd+Alt+V", "record"),
-            ("Cmd+Alt+X", "stop"),
-        ]
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        [
-            ("PrintScreen", "image"),
-            ("CmdOrCtrl+Alt+S", "scroll"),
-            ("CmdOrCtrl+Alt+V", "record"),
-            ("CmdOrCtrl+Alt+X", "stop"),
-        ]
-    }
-}
-
-fn setup_shortcuts(app: &tauri::App) {
-    let gs = app.global_shortcut();
-    for (key, action) in hotkeys() {
-        let action = action;
-        let result = gs.on_shortcut(key, move |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                match action {
-                    "image" | "scroll" | "record" => commands::overlay::spawn_overlay(app, action),
-                    _ => {
-                        let _ = commands::record::stop_recording_impl(app);
-                    }
-                }
-            }
-        });
-        if let Err(e) = result {
-            eprintln!("failed to register global shortcut '{key}': {e}");
-        }
-    }
-}
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open SnapPress", true, None::<&str>)?;
@@ -157,7 +116,11 @@ pub fn run() {
             std::thread::spawn(move || commands::diagnostics::log_environment(&handle));
 
             setup_tray(app)?;
-            setup_shortcuts(app);
+
+            // Register the configured global shortcuts off the main thread;
+            // applying them talks to the plugin, which wants the main thread.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || hotkeys::apply(&handle));
 
             // On macOS, fire the Screen Recording prompt off the main thread
             // when access is missing, so capture calls never hit scap's
@@ -185,6 +148,7 @@ pub fn run() {
             commands::system::screen_permission_status,
             commands::system::request_screen_permission,
             commands::system::open_screen_settings,
+            commands::system::hold_hotkeys,
             commands::system::get_settings,
             commands::system::set_settings,
             commands::system::list_library,

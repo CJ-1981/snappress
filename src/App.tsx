@@ -260,9 +260,10 @@ export default function App() {
           open={settingsOpen}
           settings={settings}
           onClose={() => setSettingsOpen(false)}
-          onSaved={(s) => {
-            setSettings(s);
+          onSaved={(saved) => {
+            setSettings(saved.settings);
             toast('Settings saved');
+            saved.hotkeyWarnings.forEach((w) => toast(w, 'err', 9000));
           }}
         />
       )}

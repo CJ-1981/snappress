@@ -1,13 +1,13 @@
 import { X } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { api } from '../lib/api';
-import type { AppSettings } from '../lib/types';
+import type { AppSettings, SavedSettings } from '../lib/types';
 
 interface Props {
   open: boolean;
   settings: AppSettings;
   onClose: () => void;
-  onSaved: (s: AppSettings) => void;
+  onSaved: (s: SavedSettings) => void;
 }
 
 const selectCls =
@@ -31,6 +31,15 @@ export default function SettingsDialog({ open, settings, onClose, onSaved }: Pro
 
 function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>) {
   const [draft, setDraft] = useState<AppSettings>(settings);
+
+  // The shortcuts are inactive while this dialog is open (the fields capture
+  // key presses), and are re-applied from the settings when it closes.
+  useEffect(() => {
+    api.holdHotkeys(true).catch(() => {});
+    return () => {
+      api.holdHotkeys(false).catch(() => {});
+    };
+  }, []);
 
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
@@ -63,6 +72,22 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
       /* dialog stays open on failure */
     }
   };
+
+  // Which shortcuts are set twice in this draft; the backend would only
+  // register the first of them, so say so before saving.
+  const hotkeyFields: [keyof AppSettings & `hotkey${string}`, string, string][] = [
+    ['hotkeyImage', 'Region capture', 'Opens the capture overlay.'],
+    ['hotkeyScroll', 'Scrolling capture', 'Starts a scrolling capture.'],
+    ['hotkeyRecord', 'Record screen', 'Starts a screen recording.'],
+    ['hotkeyStop', 'Stop recording', 'Stops the running recording.'],
+  ];
+  const hotkeyUseCounts = new Map<string, string[]>();
+  for (const [key, label] of hotkeyFields) {
+    const value = draft[key] as string;
+    if (value.trim()) {
+      hotkeyUseCounts.set(value.trim(), [...(hotkeyUseCounts.get(value.trim()) ?? []), label]);
+    }
+  }
 
   return (
     <div
@@ -184,6 +209,27 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
             </select>
           </Field>
           <div className="border-t border-zinc-800 pt-4">
+            <span className="mb-2 block text-xs font-medium text-zinc-400">Keyboard shortcuts</span>
+            <div className="space-y-2">
+              {hotkeyFields.map(([key, label, hint]) => (
+                <HotkeyInput
+                  key={key}
+                  label={label}
+                  hint={hint}
+                  value={draft[key] as string}
+                  usedBy={hotkeyUseCounts.get((draft[key] as string).trim())?.filter((l) => l !== label) ?? []}
+                  onChange={(v) => set(key, v)}
+                />
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">
+              Works system-wide while the app runs. Click a field and press the keys; Backspace
+              clears one, Esc cancels. An empty shortcut disables it. Shortcuts are inactive while
+              this dialog is open, and if macOS or another app owns a combination, the default is
+              kept instead.
+            </p>
+          </div>
+          <div className="border-t border-zinc-800 pt-4">
             <span className="mb-2 block text-xs font-medium text-zinc-400">Troubleshooting</span>
             <div className="flex flex-wrap gap-2">
               <button
@@ -232,6 +278,144 @@ function SettingsDialogInner({ settings, onClose, onSaved }: Omit<Props, 'open'>
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const isMac = /Mac/i.test(navigator.platform);
+
+/** The primary modifier, stored and shown differently per platform. */
+const PRIMARY = isMac ? 'Cmd' : 'Ctrl';
+
+/** KeyboardEvent.code -> the shortcut plugin's key token. */
+const KEY_TOKENS: Record<string, string> = {
+  Space: 'Space',
+  PrintScreen: 'PrintScreen',
+  ScrollLock: 'ScrollLock',
+  Pause: 'Pause',
+  Insert: 'Insert',
+  Delete: 'Delete',
+  Home: 'Home',
+  End: 'End',
+  PageUp: 'PageUp',
+  PageDown: 'PageDown',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  Minus: 'Minus',
+  Equal: 'Equal',
+  BracketLeft: 'BracketLeft',
+  BracketRight: 'BracketRight',
+  Backquote: 'Backquote',
+  Backslash: 'Backslash',
+  Comma: 'Comma',
+  Period: 'Period',
+  Slash: 'Slash',
+  Semicolon: 'Semicolon',
+  Quote: 'Quote',
+  Tab: 'Tab',
+};
+
+function keyToken(code: string): string | null {
+  if (KEY_TOKENS[code]) return KEY_TOKENS[code];
+  let match = code.match(/^Key([A-Z])$/);
+  if (match) return match[1];
+  match = code.match(/^Digit(\d)$/);
+  if (match) return match[1];
+  match = code.match(/^Numpad(\d)$/);
+  if (match) return `Num${match[1]}`;
+  if (/^F([1-9]|1\d|2[0-4])$/.test(code)) return code;
+  return null;
+}
+
+/** "Cmd+Shift+6" as the user sees it. */
+function pretty(value: string): string {
+  return value
+    .split('+')
+    .filter(Boolean)
+    .map((part) => (isMac ? { Cmd: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧' }[part] : { Super: 'Win' }[part]) ?? part)
+    .join(isMac ? ' ' : '+');
+}
+
+function HotkeyInput(props: {
+  label: string;
+  hint: string;
+  value: string;
+  /** Labels of other actions sharing this shortcut in the current draft. */
+  usedBy: string[];
+  onChange: (value: string) => void;
+}) {
+  const { label, hint, value, usedBy, onChange } = props;
+  const [recording, setRecording] = useState(false);
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setRecording(false);
+      return;
+    }
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      onChange('');
+      setRecording(false);
+      return;
+    }
+    if (['Control', 'Meta', 'Alt', 'Shift', 'AltGraph', 'Fn', 'FnLock'].includes(e.key)) return;
+    const token = keyToken(e.code) ?? (e.key.length === 1 ? e.key.toUpperCase() : null);
+    if (!token) return;
+    e.preventDefault();
+    const mods: string[] = [];
+    if (e.metaKey) mods.push(isMac ? 'Cmd' : 'Super');
+    if (e.ctrlKey) mods.push('Ctrl');
+    if (e.altKey) mods.push('Alt');
+    if (e.shiftKey) mods.push('Shift');
+    // A bare letter or digit as a system-wide shortcut fires while typing.
+    if (mods.length === 0 && /^[A-Z0-9]$/.test(token)) return;
+    onChange([...mods, token].join('+'));
+    setRecording(false);
+  };
+
+  const duplicate = usedBy.length > 0;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-zinc-300" title={hint}>
+          {label}
+        </span>
+        {value && !recording && (
+          <button
+            type="button"
+            title="Disable this shortcut"
+            aria-label={`Disable the ${label} shortcut`}
+            onClick={() => onChange('')}
+            className="text-xs text-zinc-500 transition hover:text-zinc-300"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={`${label} shortcut`}
+        onClick={() => setRecording(true)}
+        onKeyDown={onKeyDown}
+        onBlur={() => setRecording(false)}
+        className={`w-full cursor-pointer select-none rounded-md border px-2.5 py-2 text-sm focus:outline-none ${
+          recording
+            ? 'border-emerald-500/60 text-emerald-400'
+            : duplicate
+              ? 'border-red-500/50 text-red-300'
+              : 'border-zinc-800 bg-zinc-950 text-zinc-200'
+        }`}
+      >
+        {recording ? 'Press keys… (Esc cancels, Backspace clears)' : value ? pretty(value) : 'Not set'}
+      </div>
+      {duplicate && (
+        <p className="mt-1 text-xs text-red-400">Also set for {usedBy.join(', ')}</p>
+      )}
     </div>
   );
 }

@@ -34,7 +34,19 @@ export interface AppSettings {
   maxScrollHeight: number;
   /** Days after which library items are removed (0 = never). */
   autoDeleteDays: number;
+  /** Global shortcuts in the shortcut plugin's format; empty = disabled. */
+  hotkeyImage: string;
+  hotkeyScroll: string;
+  hotkeyRecord: string;
+  hotkeyStop: string;
   theme: 'dark';
+}
+
+/** What saving settings returns: the saved values plus shortcut warnings. */
+export interface SavedSettings {
+  settings: AppSettings;
+  /** Shortcuts that could not be registered; defaults are used instead. */
+  hotkeyWarnings: string[];
 }
 
 export interface Rect {

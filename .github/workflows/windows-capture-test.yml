@@ -345,6 +345,10 @@ jobs:
             if (-not ($lines | Select-String -SimpleMatch "overlay on monitor")) {
               $failures += "the overlay window was never created"
             }
+            $hotkeys = $lines | Select-String -SimpleMatch "hotkeys registered:"
+            if (-not ($hotkeys | Select-String -SimpleMatch "image=")) {
+              $failures += "the global shortcuts were not registered at startup"
+            }
             $failed = $lines | Select-String -SimpleMatch "capture failed", "could not copy to the clipboard",
               "copy and delete of", "File does not exist at path"
             if ($failed) { $failures += ($failed | ForEach-Object { $_.Line }) }

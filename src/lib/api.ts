@@ -1,6 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AppSettings, CaptureItem, CaptureMode, DisplayInfo, PendingOverlay, Rect } from './types';
+import type {
+  AppSettings,
+  CaptureItem,
+  CaptureMode,
+  DisplayInfo,
+  PendingOverlay,
+  Rect,
+  SavedSettings,
+} from './types';
 
 export const api = {
   // capture / overlay
@@ -69,8 +77,11 @@ export const api = {
   screenPermission: () => invoke<boolean>('screen_permission_status'),
   requestScreenPermission: () => invoke<boolean>('request_screen_permission'),
   openScreenSettings: () => invoke<void>('open_screen_settings'),
+  // While held, the global shortcuts are unregistered so a press reaches the
+  // shortcut fields in the settings dialog instead of triggering the action.
+  holdHotkeys: (hold: boolean) => invoke<void>('hold_hotkeys', { hold }),
   getSettings: () => invoke<AppSettings>('get_settings'),
-  setSettings: (settings: AppSettings) => invoke<AppSettings>('set_settings', { settings }),
+  setSettings: (settings: AppSettings) => invoke<SavedSettings>('set_settings', { settings }),
   copyDiagnostics: () => invoke<string>('copy_diagnostics'),
   openLogFolder: () => invoke<void>('open_log_folder'),
 };

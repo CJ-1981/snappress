@@ -51,6 +51,9 @@ pub struct AppState {
     /// Bumped whenever a capture starts or ends; lets a watchdog tell whether
     /// the capture it was started for is still the current one.
     pub capture_generation: AtomicU64,
+    /// The global shortcuts currently registered, as (action, shortcut
+    /// string); the source of truth for replacing them when settings change.
+    pub registered_hotkeys: Mutex<Vec<(&'static str, String)>>,
 }
 
 impl AppState {
@@ -66,6 +69,7 @@ impl AppState {
             pending_overlay: Mutex::new(None),
             capture_in_flight: AtomicBool::new(false),
             overlay_opening: AtomicBool::new(false),
+            registered_hotkeys: Mutex::new(Vec::new()),
             capture_generation: AtomicU64::new(0),
         }
     }

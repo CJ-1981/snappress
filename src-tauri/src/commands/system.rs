@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::encode;
 use crate::library::{self, CaptureItem};
@@ -71,6 +72,25 @@ pub fn request_screen_permission() -> bool {
     crate::capture::request_screen_permission()
 }
 
+/// Temporarily unregister the global shortcuts while the settings dialog is
+/// open, so pressing a shortcut to reassign it reaches the dialog instead of
+/// triggering the action. `hold: false` re-registers from the settings.
+#[tauri::command]
+pub fn hold_hotkeys(app: AppHandle, hold: bool) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    if !hold {
+        crate::hotkeys::apply(&app);
+        return Ok(());
+    }
+    let gs = app.global_shortcut();
+    for (action, old) in st.registered_hotkeys.lock().unwrap().drain(..).collect::<Vec<_>>() {
+        if let Err(e) = gs.unregister(old.as_str()) {
+            log::warn!("could not unregister the {action} shortcut '{old}' for the settings dialog: {e}");
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn open_screen_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -90,13 +110,26 @@ pub fn get_settings(app: AppHandle) -> Settings {
     app.state::<AppState>().settings.lock().unwrap().clone()
 }
 
+/// What `set_settings` returns: the saved settings plus any shortcut that
+/// could not be registered (it fell back to its default).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSettings {
+    pub settings: Settings,
+    pub hotkey_warnings: Vec<String>,
+}
+
 #[tauri::command]
-pub fn set_settings(app: AppHandle, settings: Settings) -> Result<Settings, String> {
+pub fn set_settings(app: AppHandle, settings: Settings) -> Result<SavedSettings, String> {
     let mut s = settings;
     s.sanitize();
     s.save(&app.state::<AppState>().settings_path())?;
     *app.state::<AppState>().settings.lock().unwrap() = s.clone();
-    Ok(s)
+    let hotkey_warnings = crate::hotkeys::apply(&app);
+    Ok(SavedSettings {
+        settings: s,
+        hotkey_warnings,
+    })
 }
 
 #[tauri::command]
