@@ -178,19 +178,42 @@ pub fn copy_image_to_clipboard(path: String) -> Result<(), String> {
     copy_image(img)
 }
 
+/// Copy an image to the clipboard and, only once that worked, remove `id`
+/// from the library: a failed copy must never cost a capture. A capture that
+/// is already gone counts as removed.
+fn copy_then_delete(
+    app: &AppHandle,
+    id: &str,
+    image: impl FnOnce() -> Result<image::DynamicImage, String>,
+) -> Result<(), String> {
+    let img = match image() {
+        Ok(img) => img,
+        Err(e) => {
+            log::error!("copy and delete of capture {id}: nothing was deleted, the image could not be read: {e}");
+            return Err(e);
+        }
+    };
+    copy_image(img)?;
+
+    let removed = library::remove_item(app, id);
+    match &removed {
+        Ok(true) => log::info!("capture {id} copied to the clipboard and removed from the library"),
+        Ok(false) => log::info!("capture {id} copied to the clipboard; it was no longer in the library"),
+        Err(e) => log::error!("capture {id} copied to the clipboard but not removed from the library: {e}"),
+    }
+    removed.map(|_| ())
+}
+
 /// Copy an image given as a data URL to the clipboard, then remove `id` from
-/// the library. The removal happens only once the image is on the clipboard,
-/// so a failed copy never costs a capture. This lets the editor copy without
-/// adding an edited version to the library.
+/// the library. This lets the editor copy without adding an edited version
+/// to the library.
 #[tauri::command]
 pub fn copy_image_and_delete(app: AppHandle, data: String, id: String) -> Result<(), String> {
-    let img = decode_data_url(&data)?;
-    copy_image(img)?;
-    library::remove_item(&app, &id).map(|_| ())
+    log::info!("copying the edited image of capture {id} and deleting it");
+    copy_then_delete(&app, &id, || decode_data_url(&data))
 }
 
 /// Copy a library capture to the clipboard, then remove it from the library.
-/// Like [`copy_image_and_delete`], only after the image is on the clipboard.
 #[tauri::command]
 pub fn copy_capture_and_delete(app: AppHandle, id: String) -> Result<(), String> {
     let item = app
@@ -203,9 +226,10 @@ pub fn copy_capture_and_delete(app: AppHandle, id: String) -> Result<(), String>
     if item.kind != "image" {
         return Err("Only images can be copied to the clipboard".into());
     }
-    let img = image::open(&item.path).map_err(|e| format!("failed to open image: {e}"))?;
-    copy_image(img)?;
-    library::remove_item(&app, &id).map(|_| ())
+    log::info!("copying capture {id} from the library and deleting it");
+    copy_then_delete(&app, &id, || {
+        image::open(&item.path).map_err(|e| format!("failed to open image: {e}"))
+    })
 }
 
 #[tauri::command]

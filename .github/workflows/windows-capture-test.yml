@@ -107,23 +107,30 @@ jobs:
           /* __PROBE__ — test only. Drives the real app once through its
              capture flow and its copy-and-delete buttons. Injected by the
              "Windows capture test" workflow into this build; never part of
-             a release. Outcomes show up in the app log, the library and the
-             clipboard. */
+             a release.
+
+             It cannot write anywhere itself, so it reports through what the
+             app already does: `save_edited` stores an image, and a saved
+             image's size shows up in the library index. A marker is an image
+             of `code`x1 pixels; a message is stored two characters per image,
+             each `a*128+b+1` pixels wide and `message*100+pair+1` high. */
           (function () {
             var COPY_DELETE = 'button[title="Copy to the clipboard and remove from the library"]';
+            var messages = [];
             function invoke(cmd, args) {
               return window.__TAURI_INTERNALS__.invoke(cmd, args);
             }
             function sleep(ms) {
               return new Promise(function (resolve) { setTimeout(resolve, ms); });
             }
-            function waitFor(test, ms, what) {
+            // Resolves to whether `test` became true within `ms`.
+            function waitFor(test, ms) {
               return new Promise(function (resolve) {
                 var started = Date.now();
                 (function poll() {
                   var ok = false;
                   try { ok = !!test(); } catch (e) { ok = false; }
-                  if (ok || Date.now() - started > ms) return resolve();
+                  if (ok || Date.now() - started > ms) return resolve(ok);
                   setTimeout(poll, 200);
                 })();
               });
@@ -133,6 +140,39 @@ jobs:
                 return b.textContent.trim() === text;
               })[0];
             }
+            function cards() {
+              return document.querySelectorAll('article').length;
+            }
+            // Every toast text, so error messages reach the workflow too.
+            new MutationObserver(function () {
+              Array.prototype.forEach.call(document.querySelectorAll('[role="status"]'), function (el) {
+                var text = el.textContent.trim();
+                if (text && text.indexOf('permission granted') < 0 && messages.indexOf(text) < 0) {
+                  messages.push(text);
+                }
+              });
+            }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+            function saveCanvas(width, height) {
+              var c = document.createElement('canvas');
+              c.width = width;
+              c.height = height;
+              c.getContext('2d').fillRect(0, 0, width, height);
+              return invoke('save_edited', { data: c.toDataURL('image/png'), format: 'png' });
+            }
+            function marker(code) {
+              return saveCanvas(code, 1);
+            }
+            function reportMessage(text, index) {
+              var chain = Promise.resolve();
+              for (var i = 0; i < text.length && i < 78; i += 2) {
+                chain = chain.then(function (i) {
+                  var a = text.charCodeAt(i) & 127;
+                  var b = i + 1 < text.length ? text.charCodeAt(i + 1) & 127 : 0;
+                  return saveCanvas(a * 128 + b + 1, (index + 1) * 100 + i / 2 + 1);
+                }.bind(null, i));
+              }
+              return chain;
+            }
             // Incompressible pixels: as heavy as a screenshot full of photos.
             function noiseDataUrl(w, h) {
               var c = document.createElement('canvas');
@@ -140,16 +180,23 @@ jobs:
               c.height = h;
               var ctx = c.getContext('2d');
               var d = ctx.createImageData(w, h);
-              var s = 12345;
+              var seed = 12345;
               for (var i = 0; i < d.data.length; i += 4) {
-                s = (s * 1103515245 + 12345) & 0x7fffffff;
-                d.data[i] = s & 255;
-                d.data[i + 1] = (s >> 8) & 255;
-                d.data[i + 2] = (s >> 16) & 255;
+                seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+                d.data[i] = seed & 255;
+                d.data[i + 1] = (seed >> 8) & 255;
+                d.data[i + 2] = (seed >> 16) & 255;
                 d.data[i + 3] = 255;
               }
               ctx.putImageData(d, 0, 0);
               return c.toDataURL('image/png');
+            }
+            function report() {
+              var chain = Promise.resolve();
+              messages.slice(0, 4).forEach(function (text, i) {
+                chain = chain.then(function () { return reportMessage(text, i); });
+              });
+              return chain;
             }
             waitFor(function () { return window.__TAURI_INTERNALS__; }, 30000)
               .then(function () { return sleep(3000); })
@@ -163,20 +210,37 @@ jobs:
                 return invoke('capture_region', { displayId: null, x: 100, y: 100, width: 320, height: 240 });
               })
               // The region capture opens in the editor: copy and delete it there.
+              // 101 = button clicked, 102 = editor closed afterwards, 103 = not closed or no button.
               .then(function () { return waitFor(function () { return document.querySelector(COPY_DELETE); }, 15000); })
-              .then(function () { document.querySelector(COPY_DELETE).click(); return sleep(1500); })
-              .then(function () { return waitFor(function () { return !document.querySelector(COPY_DELETE); }, 15000); })
+              .then(function (found) {
+                if (!found) { messages.push('editor: no copy-and-delete button'); return marker(103); }
+                document.querySelector(COPY_DELETE).click();
+                return sleep(500)
+                  .then(function () { return waitFor(function () { return !document.querySelector(COPY_DELETE); }, 10000); })
+                  .then(function (closed) { return marker(101); })
+                  .then(function () { return marker(closed ? 102 : 103); });
+              })
               // The same from a library card, for the full-screen capture.
+              // 110 + number of cards before the click; 120 = card gone, 121 = still there.
               .then(function () { return sleep(500); })
               .then(function () { button('Library').click(); return sleep(800); })
-              .then(function () { return waitFor(function () { return button('Copy and delete'); }, 15000); })
-              .then(function () { button('Copy and delete').click(); return sleep(1500); })
-              .then(function () { return waitFor(function () { return !button('Copy and delete'); }, 15000); })
-              // A large image through the editor's path, then the editor's save.
+              .then(function () { return marker(110 + cards()); })
+              .then(function () {
+                var b = button('Copy and delete');
+                if (!b) { messages.push('library: no copy-and-delete button'); return marker(121); }
+                b.click();
+                return sleep(500)
+                  .then(function () { return waitFor(function () { return cards() === 0; }, 10000); })
+                  .then(function (gone) { return marker(gone ? 120 : 121); });
+              })
+              // A large image through the editor's copy path (130 done, 131 rejected) ...
               .then(function () { return invoke('copy_image_and_delete', { data: noiseDataUrl(1920, 1080), id: 'no-such-item' }); })
-              .then(function () { return sleep(1500); })
+              .then(function () { return marker(130); }, function () { return marker(131); })
+              // ... and through its save path (140 done, 141 rejected).
               .then(function () { return invoke('save_edited', { data: noiseDataUrl(1920, 1080), format: 'png' }); })
-              .catch(function () { /* the app log, the library and the clipboard carry the outcome */ });
+              .then(function () { return marker(140); }, function () { return marker(141); })
+              .then(function () { return sleep(1000); })
+              .then(report);
           })();
           </script>
           '@
@@ -201,9 +265,35 @@ jobs:
         run: |
           $exe = (Resolve-Path "src-tauri/target/debug/snappress.exe").Path
           Start-Process -FilePath $exe
-          Start-Sleep -Seconds 100
+          Start-Sleep -Seconds 110
 
           $failures = @()
+          $data = Join-Path $env:APPDATA "app.snappress.desktop"
+          $log = Join-Path $env:LOCALAPPDATA "app.snappress.desktop\logs\snappress.log"
+
+          # Read the clipboard while the app still runs: like any app the user
+          # pastes into, this asks the app for the image it copied. An app
+          # that does not answer would hang the reader, so it gets a time limit.
+          $reader = Join-Path $env:RUNNER_TEMP "read-clipboard.ps1"
+          $readClipboard = @'
+          Add-Type -AssemblyName System.Windows.Forms
+          $image = [System.Windows.Forms.Clipboard]::GetImage()
+          if ($image) { "{0}x{1}" -f $image.Width, $image.Height } else { "none" }
+          '@
+          Set-Content -Path $reader -Value $readClipboard -Encoding ascii
+          $readerOut = "$reader.out"
+          $p = Start-Process powershell.exe -NoProfile -Sta -ExecutionPolicy Bypass -File $reader -PassThru -WindowStyle Hidden -RedirectStandardOutput $readerOut
+          if (-not $p.WaitForExit(20000)) {
+            $failures += "the app did not answer a clipboard read within 20 seconds"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+          $clipInfo = ""
+          if (Test-Path $readerOut) { $clipInfo = ([string](Get-Content $readerOut -Raw)).Trim() }
+          "clipboard image while the app runs: '$clipInfo'"
+          if ($clipInfo -ne "1920x1080") {
+            $failures += "the clipboard does not hold the copied 1920x1080 image (it read '$clipInfo')"
+          }
+
           $app = Get-Process snappress -ErrorAction SilentlyContinue
           if (-not $app) {
             $failures += "the app is no longer running"
@@ -213,8 +303,6 @@ jobs:
             Stop-Process -Name snappress -Force
           }
 
-          $data = Join-Path $env:APPDATA "app.snappress.desktop"
-          $log = Join-Path $env:LOCALAPPDATA "app.snappress.desktop\logs\snappress.log"
           if (-not (Test-Path $log)) {
             $failures += "the app wrote no log file"
           } else {
@@ -222,7 +310,7 @@ jobs:
             if (-not ($lines | Select-String -SimpleMatch "overlay on monitor")) {
               $failures += "the overlay window was never created"
             }
-            $failed = $lines | Select-String -SimpleMatch "capture failed", "could not copy to the clipboard"
+            $failed = $lines | Select-String -SimpleMatch "capture failed", "could not copy to the clipboard", "copy and delete of"
             if ($failed) { $failures += ($failed | ForEach-Object { $_.Line }) }
           }
 
@@ -234,26 +322,44 @@ jobs:
             $img.Dispose()
             $size
           })
-          "files in the captures folder: $($sizes -join ', ')"
+          "capture-sized files in the captures folder: $(($sizes | Where-Object { $_ -in "320x240", "1024x768", "1920x1080" }) -join ', ')"
           # Copying and deleting a capture must remove its file as well.
           $left = $sizes | Where-Object { $_ -eq "320x240" -or $_ -eq "1024x768" }
           if ($left) { $failures += "a copied capture is still on disk: $($left -join ', ')" }
 
-          # The library should hold exactly the large image the probe saved.
           $indexFile = Join-Path $data "index.json"
           $items = @()
           if (Test-Path $indexFile) { $items = @((Get-Content $indexFile -Raw | ConvertFrom-Json).items) }
-          $listed = $items | ForEach-Object { "$($_.width)x$($_.height) $($_.origin)" }
-          "library: $($listed -join ', ')"
-          $onlySaved = ($items.Count -eq 1) -and ($items[0].width -eq 1920) -and
-            ($items[0].height -eq 1080) -and ($items[0].origin -eq "edit")
+          $kept = $items | Where-Object { $_.width -ge 200 -and $_.height -ge 200 }
+          "captures left in the library: $(($kept | ForEach-Object { "$($_.width)x$($_.height) $($_.origin)" }) -join ', ')"
+          $onlySaved = @($kept).Count -eq 1 -and $kept[0].width -eq 1920 -and $kept[0].height -eq 1080
           if (-not $onlySaved) { $failures += "the library should hold exactly the saved 1920x1080 image" }
 
-          # The clipboard should still hold the large image that was copied.
-          $clip = Get-Clipboard -Format Image -ErrorAction SilentlyContinue
-          if ($clip) { "clipboard image: $($clip.Width)x$($clip.Height)" } else { "clipboard image: none" }
-          if (-not $clip -or $clip.Width -ne 1920 -or $clip.Height -ne 1080) {
-            $failures += "the clipboard does not hold the copied 1920x1080 image"
+          # What the probe reported, as the sizes of the images it saved.
+          $markers = @($items | Where-Object { $_.height -eq 1 } | ForEach-Object { [int]$_.width } | Sort-Object -Unique)
+          "probe markers: $($markers -join ', ')"
+          foreach ($expected in 101, 102, 111, 120, 130, 140) {
+            if ($markers -notcontains $expected) { $failures += "probe marker $expected is missing" }
+          }
+          foreach ($bad in 103, 121, 131, 141) {
+            if ($markers -contains $bad) { $failures += "probe marker $bad: that step did not succeed" }
+          }
+          $rows = @{}
+          foreach ($it in $items) {
+            if ($it.height -ge 101 -and $it.width -le 16384) {
+              $v = [int]$it.width - 1
+              $rows[[int]$it.height] = [string][char][int][math]::Floor($v / 128) + [string][char]($v % 128)
+            }
+          }
+          $texts = @{}
+          foreach ($h in ($rows.Keys | Sort-Object)) {
+            $m = [int][math]::Floor(($h - 1) / 100) - 1
+            if (-not $texts.ContainsKey($m)) { $texts[$m] = "" }
+            $texts[$m] += $rows[$h]
+          }
+          foreach ($m in ($texts.Keys | Sort-Object)) {
+            $text = $texts[$m].TrimEnd([char]0)
+            "probe message ${m}: $text"
           }
 
           if ($failures.Count -gt 0) {
