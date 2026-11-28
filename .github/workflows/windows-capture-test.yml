@@ -342,11 +342,11 @@ jobs:
             if ($markers -notcontains $expected) { $failures += "probe marker $expected is missing" }
           }
           foreach ($bad in 103, 121, 131, 141) {
-            if ($markers -contains $bad) { $failures += "probe marker $bad: that step did not succeed" }
+            if ($markers -contains $bad) { $failures += "probe marker ${bad}: that step did not succeed" }
           }
           $rows = @{}
           foreach ($it in $items) {
-            if ($it.height -ge 101 -and $it.width -le 16384) {
+            if ($it.height -ge 101 -and $it.height -lt 500 -and $it.width -le 16384) {
               $v = [int]$it.width - 1
               $rows[[int]$it.height] = [string][char][int][math]::Floor($v / 128) + [string][char]($v % 128)
             }
