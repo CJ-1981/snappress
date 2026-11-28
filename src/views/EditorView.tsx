@@ -95,6 +95,9 @@ const HEADER_ICON_BUTTON =
   'inline-flex h-8 min-w-[32px] items-center justify-center gap-1.5 rounded px-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-40';
 const PRIMARY_BUTTON =
   'inline-flex h-8 items-center justify-center rounded bg-emerald-500 px-3 text-xs font-semibold text-zinc-950 transition-colors hover:bg-emerald-400 disabled:pointer-events-none disabled:opacity-40';
+/** Like the header buttons, but red on hover: it removes the capture. */
+const REMOVE_BUTTON =
+  'inline-flex h-8 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-red-300 disabled:pointer-events-none disabled:opacity-40';
 
 function isDrawTool(tool: ToolId): tool is DrawTool {
   return (
@@ -153,8 +156,14 @@ function fileNameOf(path: string): string {
  * size, scaled down via CSS; all layer coordinates are stored in image pixel
  * space and converted from pointer coordinates through the display scale.
  */
-export default function EditorView(props: { item: CaptureItem; onClose: () => void }): JSX.Element {
-  const { item, onClose } = props;
+interface Props {
+  item: CaptureItem;
+  onClose: () => void;
+  /** Called once the capture has been copied to the clipboard and deleted. */
+  onCopiedAndDeleted: () => void;
+}
+
+export default function EditorView({ item, onClose, onCopiedAndDeleted }: Props) {
 
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
   const [doc, setDoc] = useState<EditorDoc | null>(null);
@@ -448,6 +457,25 @@ export default function EditorView(props: { item: CaptureItem; onClose: () => vo
       showStatus('Copied to clipboard', true);
     } catch (err) {
       showStatus(err instanceof Error ? err.message : 'Copy failed', false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Copy what is on the canvas and remove the capture from the library. The
+  // backend deletes only once the image is on the clipboard, and unlike
+  // `handleCopy` this adds no edited copy to the library.
+  const handleCopyAndDelete = async () => {
+    const current = docRef.current;
+    if (!current || busy) return;
+    setBusy(true);
+    try {
+      const dataUrl = buildExportCanvas(current).toDataURL('image/png');
+      await api.copyImageAndDelete(dataUrl, item.id);
+      onCopiedAndDeleted();
+    } catch (err) {
+      // Tauri rejects with the backend's reason as a plain string.
+      showStatus(err instanceof Error ? err.message : String(err) || 'Copy failed', false);
     } finally {
       setBusy(false);
     }
@@ -884,6 +912,17 @@ export default function EditorView(props: { item: CaptureItem; onClose: () => vo
           className={HEADER_ICON_BUTTON}
         >
           <Copy size={16} />
+        </button>
+        <button
+          type="button"
+          title="Copy to the clipboard and remove from the library"
+          aria-label="Copy and delete"
+          disabled={busy}
+          onClick={handleCopyAndDelete}
+          className={REMOVE_BUTTON}
+        >
+          <Copy size={16} />
+          <span>Copy and delete</span>
         </button>
         <button
           type="button"

@@ -193,6 +193,8 @@ pub fn run() {
             commands::system::open_path,
             commands::system::get_library_dir,
             commands::system::copy_image_to_clipboard,
+            commands::system::copy_image_and_delete,
+            commands::system::copy_capture_and_delete,
             commands::system::export_gif,
             commands::system::save_edited,
             commands::system::read_image_base64,

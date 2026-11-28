@@ -132,9 +132,14 @@ where
     Ok(removed)
 }
 
-pub fn delete_item(app: &AppHandle, id: &str) -> Result<(), String> {
+/// Remove one item (and its file). `false` when the library has no such item.
+pub fn remove_item(app: &AppHandle, id: &str) -> Result<bool, String> {
     let removed = remove_matching(app, |i| i.id == id)?;
-    if removed.is_empty() {
+    Ok(!removed.is_empty())
+}
+
+pub fn delete_item(app: &AppHandle, id: &str) -> Result<(), String> {
+    if !remove_item(app, id)? {
         return Err("Item not found".into());
     }
     Ok(())

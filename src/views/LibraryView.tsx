@@ -134,6 +134,15 @@ export default function LibraryView({ items, onOpenEditor, toast }: Props) {
                     onClick={() => act(() => api.copyImageToClipboard(it.path), 'Image copied to clipboard')}
                   />
                 )}
+                {it.kind === 'image' && (
+                  <ActionButton
+                    icon={Copy}
+                    label="Copy and delete"
+                    onClick={() =>
+                      act(() => api.copyCaptureAndDelete(it.id), 'Copied and removed from library')
+                    }
+                  />
+                )}
                 {it.kind === 'video' && (
                   <ActionButton
                     icon={FileOutput}

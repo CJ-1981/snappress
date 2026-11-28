@@ -95,34 +95,63 @@ jobs:
       - name: Build frontend
         run: npm run ui:build
 
-      # The probe opens and cancels the region overlay, then takes a
-      # full-screen and a region capture. The app log, the saved captures
-      # and the window state afterwards tell whether the flow works.
+      # The probe opens and cancels the region overlay, takes a full-screen
+      # and a region capture, then copies and deletes both captures (one from
+      # the editor, one from a library card) and pushes a large image through
+      # the editor's copy and save paths. The app log, the library, the
+      # clipboard and the window state afterwards tell whether it all works.
       - name: Build the app with a startup probe
         run: |
           $probe = @'
           <script>
           /* __PROBE__ — test only. Drives the real app once through its
-             capture flow. Injected by the "Windows capture test" workflow
-             into this build; never part of a release. */
+             capture flow and its copy-and-delete buttons. Injected by the
+             "Windows capture test" workflow into this build; never part of
+             a release. Outcomes show up in the app log, the library and the
+             clipboard. */
           (function () {
+            var COPY_DELETE = 'button[title="Copy to the clipboard and remove from the library"]';
             function invoke(cmd, args) {
               return window.__TAURI_INTERNALS__.invoke(cmd, args);
             }
             function sleep(ms) {
               return new Promise(function (resolve) { setTimeout(resolve, ms); });
             }
-            function waitForTauri() {
-              return new Promise(function (resolve, reject) {
+            function waitFor(test, ms, what) {
+              return new Promise(function (resolve) {
                 var started = Date.now();
                 (function poll() {
-                  if (window.__TAURI_INTERNALS__) return resolve();
-                  if (Date.now() - started > 30000) return reject(new Error('no Tauri IPC'));
+                  var ok = false;
+                  try { ok = !!test(); } catch (e) { ok = false; }
+                  if (ok || Date.now() - started > ms) return resolve();
                   setTimeout(poll, 200);
                 })();
               });
             }
-            waitForTauri()
+            function button(text) {
+              return Array.prototype.filter.call(document.querySelectorAll('button'), function (b) {
+                return b.textContent.trim() === text;
+              })[0];
+            }
+            // Incompressible pixels: as heavy as a screenshot full of photos.
+            function noiseDataUrl(w, h) {
+              var c = document.createElement('canvas');
+              c.width = w;
+              c.height = h;
+              var ctx = c.getContext('2d');
+              var d = ctx.createImageData(w, h);
+              var s = 12345;
+              for (var i = 0; i < d.data.length; i += 4) {
+                s = (s * 1103515245 + 12345) & 0x7fffffff;
+                d.data[i] = s & 255;
+                d.data[i + 1] = (s >> 8) & 255;
+                d.data[i + 2] = (s >> 16) & 255;
+                d.data[i + 3] = 255;
+              }
+              ctx.putImageData(d, 0, 0);
+              return c.toDataURL('image/png');
+            }
+            waitFor(function () { return window.__TAURI_INTERNALS__; }, 30000)
               .then(function () { return sleep(3000); })
               .then(function () { return invoke('start_region_capture', { mode: 'image', displayId: null }); })
               .then(function () { return sleep(2500); })
@@ -133,7 +162,21 @@ jobs:
               .then(function () {
                 return invoke('capture_region', { displayId: null, x: 100, y: 100, width: 320, height: 240 });
               })
-              .catch(function () { /* the app log carries the reason */ });
+              // The region capture opens in the editor: copy and delete it there.
+              .then(function () { return waitFor(function () { return document.querySelector(COPY_DELETE); }, 15000); })
+              .then(function () { document.querySelector(COPY_DELETE).click(); return sleep(1500); })
+              .then(function () { return waitFor(function () { return !document.querySelector(COPY_DELETE); }, 15000); })
+              // The same from a library card, for the full-screen capture.
+              .then(function () { return sleep(500); })
+              .then(function () { button('Library').click(); return sleep(800); })
+              .then(function () { return waitFor(function () { return button('Copy and delete'); }, 15000); })
+              .then(function () { button('Copy and delete').click(); return sleep(1500); })
+              .then(function () { return waitFor(function () { return !button('Copy and delete'); }, 15000); })
+              // A large image through the editor's path, then the editor's save.
+              .then(function () { return invoke('copy_image_and_delete', { data: noiseDataUrl(1920, 1080), id: 'no-such-item' }); })
+              .then(function () { return sleep(1500); })
+              .then(function () { return invoke('save_edited', { data: noiseDataUrl(1920, 1080), format: 'png' }); })
+              .catch(function () { /* the app log, the library and the clipboard carry the outcome */ });
           })();
           </script>
           '@
@@ -158,7 +201,7 @@ jobs:
         run: |
           $exe = (Resolve-Path "src-tauri/target/debug/snappress.exe").Path
           Start-Process -FilePath $exe
-          Start-Sleep -Seconds 35
+          Start-Sleep -Seconds 100
 
           $failures = @()
           $app = Get-Process snappress -ErrorAction SilentlyContinue
@@ -179,7 +222,7 @@ jobs:
             if (-not ($lines | Select-String -SimpleMatch "overlay on monitor")) {
               $failures += "the overlay window was never created"
             }
-            $failed = $lines | Select-String -SimpleMatch "capture failed"
+            $failed = $lines | Select-String -SimpleMatch "capture failed", "could not copy to the clipboard"
             if ($failed) { $failures += ($failed | ForEach-Object { $_.Line }) }
           }
 
@@ -191,12 +234,26 @@ jobs:
             $img.Dispose()
             $size
           })
-          "captures: $($sizes -join ', ')"
-          if (-not ($sizes | Select-String -SimpleMatch "320x240")) {
-            $failures += "the region capture was not saved as 320x240"
-          }
-          if (-not ($sizes | Where-Object { $_ -ne "320x240" })) {
-            $failures += "the full-screen capture was not saved"
+          "files in the captures folder: $($sizes -join ', ')"
+          # Copying and deleting a capture must remove its file as well.
+          $left = $sizes | Where-Object { $_ -eq "320x240" -or $_ -eq "1024x768" }
+          if ($left) { $failures += "a copied capture is still on disk: $($left -join ', ')" }
+
+          # The library should hold exactly the large image the probe saved.
+          $indexFile = Join-Path $data "index.json"
+          $items = @()
+          if (Test-Path $indexFile) { $items = @((Get-Content $indexFile -Raw | ConvertFrom-Json).items) }
+          $listed = $items | ForEach-Object { "$($_.width)x$($_.height) $($_.origin)" }
+          "library: $($listed -join ', ')"
+          $onlySaved = ($items.Count -eq 1) -and ($items[0].width -eq 1920) -and
+            ($items[0].height -eq 1080) -and ($items[0].origin -eq "edit")
+          if (-not $onlySaved) { $failures += "the library should hold exactly the saved 1920x1080 image" }
+
+          # The clipboard should still hold the large image that was copied.
+          $clip = Get-Clipboard -Format Image -ErrorAction SilentlyContinue
+          if ($clip) { "clipboard image: $($clip.Width)x$($clip.Height)" } else { "clipboard image: none" }
+          if (-not $clip -or $clip.Width -ne 1920 -or $clip.Height -ne 1080) {
+            $failures += "the clipboard does not hold the copied 1920x1080 image"
           }
 
           if ($failures.Count -gt 0) {

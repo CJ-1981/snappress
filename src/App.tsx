@@ -38,6 +38,9 @@ export default function App() {
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [screenGranted, setScreenGranted] = useState<boolean | null>(null);
   const pollPermission = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  // The tab showing before the editor opened; "Copy and delete" returns to it.
+  const currentView = useRef<View>('capture');
+  const viewBeforeEditor = useRef<View>('capture');
 
   const toast = useCallback((text: string, kind: 'ok' | 'err' = 'ok', ms = 4200) => {
     const id = Date.now() + Math.random();
@@ -81,8 +84,15 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    currentView.current = view;
+  }, [view]);
+
   const openEditor = useCallback((item: CaptureItem) => {
     if (item.kind !== 'image') return;
+    // Already in the editor: another capture replaced the one being edited,
+    // so the tab to return to stays the same.
+    if (currentView.current !== 'editor') viewBeforeEditor.current = currentView.current;
     setEditorItem(item);
     setView('editor');
   }, []);
@@ -225,7 +235,14 @@ export default function App() {
         )}
         {view === 'library' && <LibraryView items={items} onOpenEditor={openEditor} toast={toast} />}
         {view === 'editor' && editorItem && (
-          <EditorView item={editorItem} onClose={() => setView('library')} />
+          <EditorView
+            item={editorItem}
+            onClose={() => setView('library')}
+            onCopiedAndDeleted={() => {
+              setView(viewBeforeEditor.current);
+              toast('Copied to clipboard and removed from the library');
+            }}
+          />
         )}
       </main>
 

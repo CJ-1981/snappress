@@ -55,6 +55,10 @@ export const api = {
     invoke<void>('open_path', { path, reveal: reveal ?? null }),
   getLibraryDir: () => invoke<string>('get_library_dir'),
   copyImageToClipboard: (path: string) => invoke<void>('copy_image_to_clipboard', { path }),
+  // Each copies first and deletes only once the image is on the clipboard.
+  copyImageAndDelete: (dataUrl: string, id: string) =>
+    invoke<void>('copy_image_and_delete', { data: dataUrl, id }),
+  copyCaptureAndDelete: (id: string) => invoke<void>('copy_capture_and_delete', { id }),
   exportGif: (id: string) => invoke<void>('export_gif', { id }),
   saveEdited: (dataUrl: string, format: 'png' | 'jpeg') =>
     invoke<CaptureItem>('save_edited', { data: dataUrl, format }),
