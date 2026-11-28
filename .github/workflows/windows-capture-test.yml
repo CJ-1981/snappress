@@ -112,8 +112,10 @@ jobs:
              It cannot write anywhere itself, so it reports through what the
              app already does: `save_edited` stores an image, and a saved
              image's size shows up in the library index. A marker is an image
-             of `code`x1 pixels; a message is stored two characters per image,
-             each `a*128+b+1` pixels wide and `message*100+pair+1` high. */
+             of `code`x1 pixels. Text goes two characters per image, `pair+2`
+             pixels tall and `message*10000 + a*100 + b + 1` wide, where a and
+             b are the characters minus 32 and b is 0 after an odd last one.
+             Both stay under 100 pixels tall, unlike any capture. */
           (function () {
             var COPY_DELETE = 'button[title="Copy to the clipboard and remove from the library"]';
             var messages = [];
@@ -159,16 +161,28 @@ jobs:
               c.getContext('2d').fillRect(0, 0, width, height);
               return invoke('save_edited', { data: c.toDataURL('image/png'), format: 'png' });
             }
+            var markers = [];
+            function mark(code) {
+              markers.push(code);
+            }
             function marker(code) {
               return saveCanvas(code, 1);
             }
+            function fileName(path) {
+              return path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
+            }
             function reportMessage(text, index) {
+              // A character as a number from 0 to 94; anything else reads as '!'.
+              function code(position) {
+                var value = text.charCodeAt(position) - 32;
+                return value >= 0 && value <= 94 ? value : 1;
+              }
               var chain = Promise.resolve();
               for (var i = 0; i < text.length && i < 78; i += 2) {
                 chain = chain.then(function (i) {
-                  var a = text.charCodeAt(i) & 127;
-                  var b = i + 1 < text.length ? text.charCodeAt(i + 1) & 127 : 0;
-                  return saveCanvas(a * 128 + b + 1, (index + 1) * 100 + i / 2 + 1);
+                  var a = code(i);
+                  var b = i + 1 < text.length ? code(i + 1) + 1 : 0;
+                  return saveCanvas(index * 10000 + a * 100 + b + 1, i / 2 + 2);
                 }.bind(null, i));
               }
               return chain;
@@ -191,13 +205,27 @@ jobs:
               ctx.putImageData(d, 0, 0);
               return c.toDataURL('image/png');
             }
+            // Reports only now, so that nothing it saves takes part in the flow.
             function report() {
               var chain = Promise.resolve();
+              markers.forEach(function (code) {
+                chain = chain.then(function () { return marker(code); });
+              });
               messages.slice(0, 4).forEach(function (text, i) {
                 chain = chain.then(function () { return reportMessage(text, i); });
               });
               return chain;
             }
+            waitFor(function () { return window.__TAURI_INTERNALS__; }, 30000)
+              .then(function () { return sleep(3000); })
+            // The editor the region capture opens in. It only counts once it shows
+            // that capture: the full-screen capture's editor is still open when
+            // the region capture arrives, and the button is disabled until the
+            // image has loaded.
+            var regionEditor = function (region) {
+              var b = document.querySelector(COPY_DELETE);
+              return b && !b.disabled && document.body.innerText.indexOf(fileName(region.path)) >= 0;
+            };
             waitFor(function () { return window.__TAURI_INTERNALS__; }, 30000)
               .then(function () { return sleep(3000); })
               .then(function () { return invoke('start_region_capture', { mode: 'image', displayId: null }); })
@@ -210,35 +238,37 @@ jobs:
                 return invoke('capture_region', { displayId: null, x: 100, y: 100, width: 320, height: 240 });
               })
               // The region capture opens in the editor: copy and delete it there.
-              // 101 = button clicked, 102 = editor closed afterwards, 103 = not closed or no button.
-              .then(function () { return waitFor(function () { return document.querySelector(COPY_DELETE); }, 15000); })
-              .then(function (found) {
-                if (!found) { messages.push('editor: no copy-and-delete button'); return marker(103); }
+              // 101 = button clicked, 102 = editor closed afterwards, 103 = it did not
+              // close, or the editor never showed this capture with an enabled button.
+              .then(function (region) { return waitFor(function () { return regionEditor(region); }, 15000); })
+              .then(function (shown) {
+                if (!shown) { messages.push('editor never showed the region capture as loaded'); mark(103); return null; }
                 document.querySelector(COPY_DELETE).click();
+                mark(101);
                 return sleep(500)
                   .then(function () { return waitFor(function () { return !document.querySelector(COPY_DELETE); }, 10000); })
-                  .then(function (closed) { return marker(101); })
-                  .then(function () { return marker(closed ? 102 : 103); });
+                  .then(function (closed) { mark(closed ? 102 : 103); });
               })
-              // The same from a library card, for the full-screen capture.
-              // 110 + number of cards before the click; 120 = card gone, 121 = still there.
+              // The same from a library card, for the full-screen capture, which
+              // is now the only capture left. 110 + number of cards before the
+              // click; 120 = the card is gone, 121 = it is still there.
               .then(function () { return sleep(500); })
               .then(function () { button('Library').click(); return sleep(800); })
-              .then(function () { return marker(110 + cards()); })
+              .then(function () { return mark(110 + cards()); })
               .then(function () {
                 var b = button('Copy and delete');
-                if (!b) { messages.push('library: no copy-and-delete button'); return marker(121); }
+                if (!b) { messages.push('library: no copy-and-delete button'); mark(121); return null; }
                 b.click();
                 return sleep(500)
                   .then(function () { return waitFor(function () { return cards() === 0; }, 10000); })
-                  .then(function (gone) { return marker(gone ? 120 : 121); });
+                  .then(function (gone) { mark(gone ? 120 : 121); });
               })
-              // A large image through the editor's copy path (130 done, 131 rejected) ...
+              // A large image through the editor's copy path: 130 = done, 131 = rejected. ...
               .then(function () { return invoke('copy_image_and_delete', { data: noiseDataUrl(1920, 1080), id: 'no-such-item' }); })
-              .then(function () { return marker(130); }, function () { return marker(131); })
-              // ... and through its save path (140 done, 141 rejected).
+              .then(function () { return mark(130); }, function () { return mark(131); })
+              // ... and through its save path: 140 = done, 141 = rejected.
               .then(function () { return invoke('save_edited', { data: noiseDataUrl(1920, 1080), format: 'png' }); })
-              .then(function () { return marker(140); }, function () { return marker(141); })
+              .then(function () { return mark(140); }, function () { return mark(141); })
               .then(function () { return sleep(1000); })
               .then(report);
           })();
@@ -281,14 +311,19 @@ jobs:
           if ($image) { "{0}x{1}" -f $image.Width, $image.Height } else { "none" }
           '@
           Set-Content -Path $reader -Value $readClipboard -Encoding ascii
-          $readerOut = "$reader.out"
-          $p = Start-Process powershell.exe -NoProfile -Sta -ExecutionPolicy Bypass -File $reader -PassThru -WindowStyle Hidden -RedirectStandardOutput $readerOut
-          if (-not $p.WaitForExit(20000)) {
+          $start = New-Object System.Diagnostics.ProcessStartInfo
+          $start.FileName = "powershell.exe"
+          $start.Arguments = "-NoProfile -Sta -ExecutionPolicy Bypass -File `"$reader`""
+          $start.UseShellExecute = $false
+          $start.RedirectStandardOutput = $true
+          $readerProcess = [System.Diagnostics.Process]::Start($start)
+          $readerOutput = $readerProcess.StandardOutput.ReadToEndAsync()
+          if (-not $readerProcess.WaitForExit(20000)) {
             $failures += "the app did not answer a clipboard read within 20 seconds"
-            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            $readerProcess.Kill()
           }
           $clipInfo = ""
-          if (Test-Path $readerOut) { $clipInfo = ([string](Get-Content $readerOut -Raw)).Trim() }
+          if ($readerProcess.HasExited) { $clipInfo = ([string]$readerOutput.Result).Trim() }
           "clipboard image while the app runs: '$clipInfo'"
           if ($clipInfo -ne "1920x1080") {
             $failures += "the clipboard does not hold the copied 1920x1080 image (it read '$clipInfo')"
@@ -344,22 +379,24 @@ jobs:
           foreach ($bad in 103, 121, 131, 141) {
             if ($markers -contains $bad) { $failures += "probe marker ${bad}: that step did not succeed" }
           }
+          # Text the probe reported: two characters per image, 2 to 99 pixels tall.
           $rows = @{}
           foreach ($it in $items) {
-            if ($it.height -ge 101 -and $it.height -lt 500 -and $it.width -le 16384) {
+            if ($it.height -ge 2 -and $it.height -lt 100 -and $it.width -lt 40000) {
               $v = [int]$it.width - 1
-              $rows[[int]$it.height] = [string][char][int][math]::Floor($v / 128) + [string][char]($v % 128)
+              $m = [int][math]::Floor($v / 10000)
+              $a = [int][math]::Floor(($v % 10000) / 100)
+              $b = $v % 100
+              if (-not $rows.ContainsKey($m)) { $rows[$m] = @{} }
+              $second = ""
+              if ($b -gt 0) { $second = [string][char](32 + $b - 1) }
+              $rows[$m][[int]$it.height] = [string][char](32 + $a) + $second
             }
           }
-          $texts = @{}
-          foreach ($h in ($rows.Keys | Sort-Object)) {
-            $m = [int][math]::Floor(($h - 1) / 100) - 1
-            if (-not $texts.ContainsKey($m)) { $texts[$m] = "" }
-            $texts[$m] += $rows[$h]
-          }
-          foreach ($m in ($texts.Keys | Sort-Object)) {
-            $text = $texts[$m].TrimEnd([char]0)
-            "probe message ${m}: $text"
+          foreach ($m in ($rows.Keys | Sort-Object)) {
+            $reported = ""
+            foreach ($h in ($rows[$m].Keys | Sort-Object)) { $reported += $rows[$m][$h] }
+            "probe message ${m}: $reported"
           }
 
           if ($failures.Count -gt 0) {

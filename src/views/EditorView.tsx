@@ -907,7 +907,7 @@ export default function EditorView({ item, onClose, onCopiedAndDeleted }: Props)
           type="button"
           title="Copy image to clipboard"
           aria-label="Copy image to clipboard"
-          disabled={busy}
+          disabled={busy || load.status !== 'ready'}
           onClick={handleCopy}
           className={HEADER_ICON_BUTTON}
         >
@@ -917,7 +917,7 @@ export default function EditorView({ item, onClose, onCopiedAndDeleted }: Props)
           type="button"
           title="Copy to the clipboard and remove from the library"
           aria-label="Copy and delete"
-          disabled={busy}
+          disabled={busy || load.status !== 'ready'}
           onClick={handleCopyAndDelete}
           className={REMOVE_BUTTON}
         >
@@ -928,7 +928,7 @@ export default function EditorView({ item, onClose, onCopiedAndDeleted }: Props)
           type="button"
           title="Save as PNG to library"
           aria-label="Save as PNG"
-          disabled={busy}
+          disabled={busy || load.status !== 'ready'}
           onClick={() => handleExport('png')}
           className={HEADER_ICON_BUTTON}
         >
@@ -939,7 +939,7 @@ export default function EditorView({ item, onClose, onCopiedAndDeleted }: Props)
           type="button"
           title="Save as JPG to library"
           aria-label="Save as JPG"
-          disabled={busy}
+          disabled={busy || load.status !== 'ready'}
           onClick={() => handleExport('jpeg')}
           className={HEADER_ICON_BUTTON}
         >
