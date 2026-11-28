@@ -239,6 +239,10 @@ export default function App() {
             item={editorItem}
             onClose={() => setView('library')}
             onCopiedAndDeleted={() => {
+              // Drop the capture from the list at once. The change event
+              // arrives a moment later, and until then the tab we return to
+              // would ask for a file that no longer exists.
+              setItems((current) => current.filter((x) => x.id !== editorItem.id));
               setView(viewBeforeEditor.current);
               toast('Copied to clipboard and removed from the library');
             }}
