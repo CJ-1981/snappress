@@ -10,8 +10,8 @@ rebuilt in Rust with Tauri 2 for **Windows** and **macOS**.
 - Screen recording to MP4 (H.264) with GIF export from the library
 - Built-in annotation editor (arrows, shapes, pen, text, blur/pixelate, numbered
   steps, highlight, crop, undo/redo)
-- Capture library with thumbnails, clipboard copy, reveal-in-folder, delete-all
-  and auto-delete after a configurable period
+- Capture library with thumbnails, clipboard copy, copy-and-delete,
+  reveal-in-folder, delete-all and auto-delete after a configurable period
 - Global hotkeys plus a system tray menu; the main window hides to tray on close
 
 ## Screenshots
@@ -151,6 +151,12 @@ pixelate are implemented with double `drawImage` down/up-scaling (no
 `ctx.filter`, which macOS WebKit does not support). The base image is loaded
 through `read_image_base64` so the canvas never becomes tainted, which keeps
 PNG/JPEG export working. Exports are saved back into the library as new items.
+
+**Copy and delete** (in the editor and on library cards) copies a capture to
+the clipboard and removes it from the library in one step, for captures that
+are only meant to be pasted somewhere. In the editor it copies straight from
+the canvas, so no edited copy is kept. The capture is deleted only once the
+image is on the clipboard.
 
 ## Settings
 
